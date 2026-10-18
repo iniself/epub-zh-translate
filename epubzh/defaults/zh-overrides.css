@@ -1,0 +1,211 @@
+
+/* ==========================================================================
+   Chinese edition typography overrides
+   - CJK-first font stack with sensible Latin fallback
+   - generous leading, justified CJK text, kinsoku line breaking
+   - code blocks keep a monospace stack and never overflow
+   ========================================================================== */
+
+body {
+    font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB",
+                 "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC",
+                 "WenQuanYi Micro Hei", sans-serif;
+    line-height: 1.75;
+    color: #1b1b1b;
+    text-align: justify;
+    text-justify: inter-ideograph;
+    line-break: strict;
+    word-break: normal;
+    overflow-wrap: break-word;
+    -webkit-hyphens: none;
+    hyphens: none;
+    margin: 0 6pt;
+}
+
+p {
+    margin: 0 0 0.55em 0;
+    orphans: 2;
+    widows: 2;
+    text-align: justify;
+    text-indent: 0;
+}
+
+/* paragraphs that carry running text get a comfortable rhythm */
+.readable-text p {
+    line-height: 1.75;
+    margin-bottom: 0.55em;
+}
+
+h1, h2, h3, h4, h5 {
+    font-family: inherit;
+    line-height: 1.45;
+    letter-spacing: 0;
+    margin-top: 1.2em;
+    margin-bottom: 0.6em;
+}
+
+h1 { font-size: 1.55em; }
+h2 { font-size: 1.25em; }
+h3 { font-size: 1.1em; }
+h4, h5 { font-size: 1em; }
+
+/* Chinese editions read better without uppercasing */
+.readable-text-h4,
+.readable-text-h5,
+.callout-container-h5,
+.print-book-callout-head {
+    text-transform: none;
+    font-style: normal;
+}
+
+li {
+    line-height: 1.7;
+}
+
+li.readable-text {
+    margin: 3pt 0 3pt 22px;
+}
+
+ul, ol {
+    padding-left: 1.4em;
+    margin: 0.4em 0 0.8em 0;
+}
+
+blockquote {
+    font-family: inherit;
+    margin: 0.8em 1.2em;
+    padding-left: 0.8em;
+    border-left: 3px solid #d0d7e2;
+}
+
+.prompt, .response {
+    font-family: inherit;
+}
+
+/* ---------- code ---------- */
+pre,
+code,
+kbd,
+samp {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas,
+                 "Liberation Mono", "Courier New", monospace;
+    font-variant-ligatures: none;
+}
+
+pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.5;
+    font-size: 0.78em;
+    margin: 0.5em 0;
+    padding: 0.5em 0.6em;
+    background: #f4f5f7;
+    border-radius: 3px;
+}
+
+.code-area {
+    font-size: 0.78em;
+}
+
+.listing-container pre {
+    border-left: 3px solid #c9d4e4;
+}
+
+code {
+    font-size: 0.92em;
+    padding: 0 0.15em;
+    background: #f4f5f7;
+    border-radius: 2px;
+    word-break: break-word;
+}
+
+pre code {
+    background: none;
+    padding: 0;
+}
+
+.code-annotations-overlay-container {
+    font-size: 0.8em;
+    font-weight: normal;
+    color: #333;
+    margin-top: 0.4em;
+}
+
+/* ---------- figures and tables ---------- */
+img {
+    max-width: 100%;
+    height: auto;
+}
+
+.figure-container-h5,
+.browsable-container-h5 {
+    font-size: 0.9em;
+    line-height: 1.6;
+    font-weight: normal;
+    color: #34495e;
+    text-align: left;
+}
+
+.browsable-container table,
+.browsable-container table td,
+.browsable-container table th {
+    font-size: 0.85em;
+    line-height: 1.5;
+    border-color: #9aa7b8;
+}
+
+.browsable-container table th {
+    background: #eef2f7;
+    font-weight: bold;
+}
+
+/* ---------- callouts ---------- */
+.callout-container {
+    border-left: 3px solid #4a6fa5;
+    border-radius: 3px;
+    padding: 0.6em 0.8em;
+    margin: 1em 0;
+}
+
+.print-book-callout {
+    margin: 0.9em 0;
+    padding: 0.5em 0.7em;
+    border-left: 3px solid #c0392b;
+    background: #fbf5f4;
+}
+
+.print-book-callout-head {
+    color: #a93226;
+    margin-right: 0.4em;
+}
+
+.introduction-summary {
+    border-left: 3px solid #4a6fa5;
+    padding-left: 0.8em;
+    margin: 1em 0;
+}
+
+/* ---------- front/back matter ---------- */
+.readable-text.dedication p {
+    font-style: normal;
+    letter-spacing: 0.05em;
+}
+
+a {
+    color: #1a4d8f;
+    text-decoration: none;
+}
+
+/* ragged right for captions and listing headers */
+.figure-container-h5,
+.browsable-container-h5,
+.listing-container-h5 {
+    text-align: left;
+}
+
+/* index and table of contents: compact, no indent, ragged right */
+.index p,
+.toc p {
+    text-indent: 0;
+}

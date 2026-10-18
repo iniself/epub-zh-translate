@@ -1,0 +1,5 @@
+#!/bin/sh
+# Run epubzh from this repository without installing anything.
+# usage: ./epubzh <command> [options]
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m epubzh "$@"

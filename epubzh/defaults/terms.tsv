@@ -1,0 +1,59 @@
+English	中文
+AI agent	AI 智能体（首次可写"AI 智能体（agent）"，之后用"智能体"）
+agentic	智能体式
+LLM / large language model	大语言模型（LLM 可保留）
+prompt	提示词
+prompt engineering	提示工程
+prompt template	提示词模板
+system prompt	系统提示词
+chain	链
+retrieval	检索
+RAG	RAG（检索增强生成）
+retriever	检索器
+document loader	文档加载器
+text splitter	文本分割器
+chunk	文本块（分块）
+embedding	嵌入向量（简称"嵌入"）
+vector store / vector database	向量存储（向量数据库）
+semantic search	语义搜索
+similarity search	相似度搜索
+chatbot	聊天机器人
+tool / tool calling	工具 / 工具调用
+function calling	函数调用
+workflow	工作流
+graph	图
+node / edge	节点 / 边
+state	状态
+memory	记忆
+streaming	流式输出
+fine-tuning	微调
+zero-shot / one-shot / few-shot	零样本 / 单样本 / 少样本
+inference	推理
+token	token（词元）
+context window	上下文窗口
+hallucination	幻觉
+grounding	有据可依（事实锚定）
+deployment	部署
+endpoint	端点
+listing	代码清单
+session	会话
+latency	延迟
+guardrails	护栏
+observability	可观测性
+evaluation	评估
+tracing	追踪
+orchestration	编排
+structured output	结构化输出
+metadata	元数据
+reranking	重排序
+knowledge base	知识库
+question answering (Q&A)	问答（Q&A）
+summarization	摘要（文本摘要）
+pipeline	流水线
+checkpoint	检查点
+human-in-the-loop	人在回路（human-in-the-loop）
+PII	个人身份信息（PII）
+moderation	内容审核
+cache	缓存
+batch	批处理
+middleware	中间件

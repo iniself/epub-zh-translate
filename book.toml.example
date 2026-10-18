@@ -1,0 +1,39 @@
+[book]
+source = "/absolute/path/to/source.epub"
+source_dir = "src"
+work = "work"
+output = "out/translated.epub"
+title = "中文书名"
+source_title = "Original English Title"
+author = "Author Name"
+translator = "AI 辅助翻译"
+language = "zh-CN"
+publisher = ""
+
+[extract]
+text_dir = "OEBPS/Text"
+extensions = [".html"]
+skip = []
+words_per_chunk = 2600
+require_latin = true
+
+[typography]
+spacing = true
+css = "default"
+stylesheet = "OEBPS/Styles/stylesheet.css"
+protect_tags = ["pre", "code", "kbd", "samp", "var", "tt"]
+
+[toc]
+contents_file = "contents.html"
+
+[toc.labels]
+# Package-level labels that are not listed in contents.html.
+# "copyright" = "版权页"
+# "contents" = "目录"
+# "dedication" = "献词"
+# "preface" = "前言"
+# "acknowledgments" = "致谢"
+# "about this book" = "关于本书"
+# "about the author" = "关于作者"
+# "about the cover illustration" = "关于封面插图"
+# "index" = "索引"

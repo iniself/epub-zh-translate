@@ -1,0 +1,147 @@
+---
+name: EPUB 中文翻译
+description: 使用本地 epubzh 流水线把整本 EPUB 翻译成简体中文，处理术语表、目录、纯文本 pre 块、分块翻译、构建和校验。用户要求翻译 EPUB、继续 EPUB 翻译项目或检查译文时使用。
+---
+
+# EPUB 中文翻译
+
+## 一、书籍信息
+
+开始前先向用户确认以下信息。缺少必填项时直接询问，不要猜路径，也不要沿用上一个项目的书名或输出路径：
+
+- 源文件（必填）：用于定位和解包书籍的 `.epub` 路径
+- 中文书名（必填）：《……》
+- 原书名（建议填）：只用于翻译规范，不参与找文件
+- 作者：……
+- 输出文件（必填）：最终 EPUB 的完整路径
+- 项目目录（可选）：不填时按输出文件推导为
+  `<输出文件所在目录>/<输出文件名去掉 .epub>-project`
+
+项目目录就是 `book.toml` 所在目录。`book.toml`、`work/`、`src/` 都放在
+项目目录下；最终 EPUB 仍在用户指定的输出路径。不要把 `book.toml` 生成在
+OpenCode 的启动目录里。
+
+例如：
+
+```text
+输出文件：/path/to/books/mybook-zh.epub
+项目目录：/path/to/books/mybook-zh-project
+book.toml：/path/to/books/mybook-zh-project/book.toml
+work：/path/to/books/mybook-zh-project/work
+```
+
+如果用户已经给出这些信息，直接使用，不要重复询问。
+
+开始执行前，先复述收集到的参数和将要运行的命令，得到用户确认后再动手。
+
+原书名只用于翻译规范；用户不提供时不要编造。`init` 后检查 `book.toml` 的 `source_title`，避免它被中文书名兜底；必要时修正。
+
+## 二、目标语言与排版
+
+- 目标语言：简体中文
+- 中英文之间加一个半角空格；中文使用全角标点。
+- 使用工具默认中文排版 CSS（字体栈、行高 1.75、两端对齐、代码块样式）。
+- 代码、命令、URL、版本号内部保持半角。
+
+如果用户要求简体中文以外的语言，先说明：当前空格规则和 CSS 针对中文优化，换成日文、韩文等需要额外调整，不要直接套用。
+
+## 三、流程与质量门槛
+
+1. 如果项目目录没有 `book.toml`：先 `init` + `extract`，确认所有文件 round-trip 通过后再开始翻译。
+   如果已有 `book.toml`：先运行 `status` + `check`，确认是续跑还是新项目；不要覆盖已有译文。
+2. 阅读目录、前言和前两章，完善 `work/terms.tsv`，然后运行 `guide`；它会生成 `work/TRANSLATION_GUIDE.md`。
+3. 正文按分块并行翻译；每个分块写完后按翻译规范自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译、中英文空格）。
+4. 全部完成后运行 `build` 和 `verify`；XML、内部链接、锚点、占位符必须零错误。
+5. 不要修改源 EPUB；不要手工改 `work/build` 里的文件，所有修改通过 `work/zh/`、`work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 完成。
+
+## 四、内容处理策略
+
+- 代码块：保持英文原样。
+- 行内代码、命令、API 名称、库名、类名、函数名、参数名、文件名、URL：保持英文。
+- 目录：保留原书章节编号和锚点，标题译成中文；自动映射不到的标题补进 `work/toc.tsv`。
+- 图注、表注、脚注、提示框：翻译；编号保持“图 4.1 / 表 2.1 / 清单 4.1”。
+- 表格正文翻译；表头、单元格中的代码、命令、参数保持英文。
+- 索引：翻译条目说明，保留字母分组和链接锚点。
+- 字母分组标题保持单个字母（A、B、C…），不要写成“字母 A”。
+
+## 五、语言与术语
+
+- 风格：通俗易懂、技术准确，像资深工程师给同事讲课；保留原文的例子、类比和幽默感。
+- 人称：you → 你；we → 我们。
+- 术语：首次出现写“中文（English）”，之后统一用中文；以 `work/terms.tsv` 为准。
+- 人名/地名：音译，首次出现附原文；产品名、公司名、协议名保留英文。
+- 术语表没有的译法，先补进 `work/terms.tsv` 再继续。
+
+## 六、翻译与成稿选项
+
+以下为默认设置，请按此执行；用户明确覆盖时，以用户本次要求为准：
+
+- 代码注释：不翻译
+- 纯文本 `<pre>`：只翻译 `work/pre.json` 中确认是自然语言的块（LLM 对话、问答示例、模型输出）；代码、命令、日志、配置以及含标签的块保持原文
+- 术语首次出现：中文（English）
+- 人名地名：音译，首次出现附原文
+- 目录编号：保留
+- 目录页码：保留
+- 输出文件名：以第一节的输出路径为准；如要带副标题，请确保该路径本身包含副标题
+- 目标语言：简体中文
+
+## 七、验收与汇报
+
+- 抽查：封面、目录、一章正文、一个表格、一个代码块、索引页。
+- 汇报：输出路径、总块数/完成数、`check` 结果、`verify` 结果、遗留问题、抽查结论。
+
+## 八、工具调用契约
+
+工具入口是包含本 `SKILL.md` 的目录下的 `epubzh-run`。skill 加载时会给出
+基础目录（Base directory）；优先用这个基础目录拼接。拿不到基础目录时，
+工具就在 `SKILL.md` 所在目录。不要假设书籍项目根目录（`book.toml`
+所在目录）里有 `./epubzh-run`。
+
+所有命令都在书籍项目根目录（`book.toml` 所在目录）执行，并显式传入项目配置。
+项目目录按输出文件推导；用户显式给了项目目录时，以用户给的为准：
+
+```bash
+TOOL="<skill-base>/epubzh-run"
+SOURCE="/path/to/book.epub"
+OUTPUT="/path/to/books/mybook-zh.epub"
+TITLE="中文书名"
+SOURCE_TITLE="Original Title"
+AUTHOR="Author"
+
+PROJECT="$(dirname "$OUTPUT")/$(basename "$OUTPUT" .epub)-project"
+mkdir -p "$PROJECT"
+cd "$PROJECT"
+
+"$TOOL" init \
+  --config "$PROJECT/book.toml" \
+  --source "$SOURCE" \
+  --title "$TITLE" \
+  --source-title "$SOURCE_TITLE" \
+  --author "$AUTHOR" \
+  --output "$OUTPUT"
+
+"$TOOL" extract --config book.toml
+"$TOOL" guide --config book.toml
+"$TOOL" status --config book.toml
+"$TOOL" check --config book.toml
+"$TOOL" build --config book.toml
+"$TOOL" verify --config book.toml
+```
+
+固定流程：
+
+`init → extract → guide → 分块翻译 → 逐章 check → build → verify`
+
+规则：
+
+- 新项目先 `init` + `extract`；已有 `book.toml` 时先 `status` + `check`，
+  不要覆盖已有译文。
+- `check <章名>` 按文件检查；同一章多个分块未全部完成时会报缺失，整章完成
+  后再要求清零。
+- `build` 每次都从源 EPUB 重新复制并重建 `work/build`；不要手工修改
+  `work/build`。
+- `verify` 检查最终 EPUB 的结构、链接、锚点和占位符；它不替代 `epubcheck`。
+- 参数不确定时运行 `"$TOOL" <命令> --help`，不要凭记忆猜参数。
+- 不要修改源 EPUB；译文只写入 `work/zh/`，目录、`<pre>`、术语分别通过
+  `work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 维护。
+- 这些命令由 agent 执行，不要让用户手动运行。
