@@ -40,6 +40,7 @@ class Config:
     text_dir: str = "OEBPS/Text"
     extensions: list = field(default_factory=lambda: [".html"])
     skip: set = field(default_factory=set)
+    protect_blocks: list = field(default_factory=list)
     words_per_chunk: int = 2600
     require_latin: bool = True
     spacing: bool = True
@@ -160,6 +161,7 @@ def load(config_path="book.toml"):
         extensions=[e if str(e).startswith(".") else "." + str(e)
                     for e in _as_list(extract.get("extensions"), [".html"])],
         skip=set(_as_list(extract.get("skip"), [])),
+        protect_blocks=_as_list(extract.get("protect_blocks"), []),
         words_per_chunk=int(extract.get("words_per_chunk", 2600)),
         require_latin=bool(extract.get("require_latin", True)),
         spacing=bool(typography.get("spacing", True)),
@@ -201,6 +203,9 @@ publisher = ""
 text_dir = "OEBPS/Text"
 extensions = [".html"]
 skip = []
+# Elements kept byte-identical during extraction, as "tag" or "tag.class".
+# Use this for code blocks a publisher styles without <pre>.
+protect_blocks = []
 words_per_chunk = 2600
 require_latin = true
 

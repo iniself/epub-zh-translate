@@ -60,7 +60,7 @@ def cmd_extract(args):
     for path in files:
         name = path.name
         source = path.read_text(encoding="utf-8")
-        work, atoms = markup.atomize(source)
+        work, atoms = markup.atomize(source, cfg.protect_blocks)
         segs = markup.extract_segments(
             work, warn=lambda w, n=name: warnings.append((n, w)),
             require_latin=cfg.require_latin)

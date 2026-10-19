@@ -8,6 +8,13 @@ from xml.sax.saxutils import escape
 
 from . import markup
 
+NAV_ITEM_RE = re.compile(r"<item\b[^>]*\bproperties=\"[^\"]*\bnav\b[^\"]*\"[^>]*>")
+HREF_RE = re.compile(r"\bhref=\"([^\"]+)\"")
+NAV_BLOCK_RE = re.compile(r"<nav\b([^>]*)>(.*?)</nav>", re.S)
+NAV_ANCHOR_RE = re.compile(r"(<a\b[^>]*>)(.*?)(</a>)", re.S)
+NAV_H1_RE = re.compile(r"(<h1\b[^>]*>)(.*?)(</h1>)", re.S)
+PAGE_LIST_RE = re.compile(r"epub:type=\"page-list\"")
+
 
 def find_ncx(cfg):
     direct = cfg.source_dir / "toc.ncx"
@@ -26,6 +33,22 @@ def find_opf(cfg):
     return None
 
 
+def find_nav(cfg):
+    """Locate the EPUB3 navigation document declared in the OPF manifest."""
+    opf = find_opf(cfg)
+    if not opf:
+        return None
+    text = Path(opf).read_text(encoding="utf-8")
+    for item in NAV_ITEM_RE.findall(text):
+        m = HREF_RE.search(item)
+        if not m:
+            continue
+        target = opf.parent / html.unescape(m.group(1))
+        if target.exists():
+            return target
+    return None
+
+
 def _clean(text):
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
@@ -36,13 +59,31 @@ def nav_labels(path):
             re.finditer(r"<navLabel>\s*<text>(.*?)</text>", text, re.S)]
 
 
+def navigation_labels(cfg):
+    """Labels of the EPUB3 navigation document (page-list entries excluded).
+
+    The page list holds print page numbers; they must stay verbatim.
+    """
+    path = find_nav(cfg)
+    if not path:
+        return []
+    text = Path(path).read_text(encoding="utf-8")
+    labels = [_clean(m.group(2)) for m in NAV_H1_RE.finditer(text)]
+    for attrs, body in NAV_BLOCK_RE.findall(text):
+        if PAGE_LIST_RE.search(attrs):
+            continue
+        labels.extend(_clean(m.group(2)) for m in NAV_ANCHOR_RE.finditer(body))
+    return [label for label in labels if label]
+
+
 def write_toc_tsv(cfg):
     """Create or refresh work/toc.tsv, preserving manual translations."""
     ncx = find_ncx(cfg)
-    if not ncx:
-        print("no toc.ncx found, skipping toc.tsv")
+    labels = nav_labels(ncx) if ncx else []
+    labels.extend(navigation_labels(cfg))
+    if not labels:
+        print("no toc.ncx or EPUB3 navigation document, skipping toc.tsv")
         return None
-    labels = nav_labels(ncx)
     existing = {}
     if cfg.toc_tsv.exists():
         with open(cfg.toc_tsv, encoding="utf-8", newline="") as fh:
@@ -136,6 +177,58 @@ def localize_toc(cfg):
     return missing
 
 
+def localize_nav(cfg):
+    """Localize the EPUB3 navigation document with the toc.tsv mapping."""
+    path = find_nav(cfg)
+    if not path:
+        print("nav: no EPUB3 navigation document, skipped")
+        return []
+    target = cfg.build_dir / path.relative_to(cfg.source_dir)
+    if not target.exists():
+        print("nav: %s missing from the build, skipped" % path.name)
+        return []
+    text = target.read_text(encoding="utf-8")
+    mapping = contents_pairs(cfg)
+    mapping.update(cfg.toc_labels)
+    mapping.update(load_toc_map(cfg))
+    missing = []
+
+    def translated(raw):
+        label = _clean(raw)
+        new = mapping.get(label)
+        if not new:
+            if label:
+                missing.append(label)
+            return None
+        return escape(new)
+
+    def repl_h1(m):
+        new = translated(m.group(2))
+        return m.group(1) + (new if new else m.group(2)) + m.group(3)
+
+    def repl_nav(m):
+        attrs, body = m.group(1), m.group(2)
+        if PAGE_LIST_RE.search(attrs):
+            return m.group(0)
+
+        def repl_a(am):
+            new = translated(am.group(2))
+            return am.group(1) + (new if new else am.group(2)) + am.group(3)
+
+        return "<nav%s>%s</nav>" % (attrs, NAV_ANCHOR_RE.sub(repl_a, body))
+
+    text = NAV_H1_RE.sub(repl_h1, text)
+    text = NAV_BLOCK_RE.sub(repl_nav, text)
+    target.write_text(text, encoding="utf-8")
+    unique = sorted(set(missing))
+    if unique:
+        print("nav: %d labels left untranslated (fill %s)"
+              % (len(unique), cfg.toc_tsv))
+    else:
+        print("nav: all labels localized")
+    return unique
+
+
 def localize_metadata(cfg):
     opf = find_opf(cfg)
     if not opf:
@@ -144,24 +237,25 @@ def localize_metadata(cfg):
     target = cfg.build_dir / opf.relative_to(cfg.source_dir)
     text = target.read_text(encoding="utf-8")
     if cfg.title:
-        text, n = re.subn(r"<dc:title>.*?</dc:title>",
-                          "<dc:title>%s</dc:title>" % escape(cfg.title),
+        text, n = re.subn(r"(<dc:title\b[^>]*>).*?(</dc:title>)",
+                          lambda m: m.group(1) + escape(cfg.title) + m.group(2),
                           text, count=1, flags=re.S)
         if not n:
             text = re.sub(r"(<metadata[^>]*>)",
                           r"\1\n    <dc:title>%s</dc:title>" % escape(cfg.title),
                           text, count=1)
-    text = re.sub(r"<dc:language>.*?</dc:language>",
-                  "<dc:language>%s</dc:language>" % escape(cfg.language),
+    text = re.sub(r"(<dc:language\b[^>]*>).*?(</dc:language>)",
+                  lambda m: m.group(1) + escape(cfg.language) + m.group(2),
                   text, count=1, flags=re.S)
     if cfg.publisher:
-        if "<dc:publisher>" in text:
-            text = re.sub(r"<dc:publisher>.*?</dc:publisher>",
-                          "<dc:publisher>%s</dc:publisher>" % escape(cfg.publisher),
-                          text, count=1, flags=re.S)
+        text = re.sub(r"(<dc:publisher\b[^>]*>).*?(</dc:publisher>)",
+                      lambda m: m.group(1) + escape(cfg.publisher) + m.group(2),
+                      text, count=1, flags=re.S)
     if cfg.translator and "dc:contributor" not in text:
-        text = re.sub(r"(<dc:language>.*?</dc:language>)",
-                      r'\1\n    <dc:contributor opf:role="trl">%s</dc:contributor>'
-                      % escape(cfg.translator), text, count=1)
+        text = re.sub(r"(<dc:language\b[^>]*>.*?</dc:language>)",
+                      r'\1\n    <dc:contributor id="pub-translator">%s'
+                      r'</dc:contributor>\n    <meta refines="#pub-translator"'
+                      r' property="role" scheme="marc:relators">trl</meta>'
+                      % escape(cfg.translator), text, count=1, flags=re.S)
     target.write_text(text, encoding="utf-8")
     print("metadata: updated")

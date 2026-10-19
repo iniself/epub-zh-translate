@@ -14,6 +14,9 @@ publisher = ""
 text_dir = "OEBPS/Text"
 extensions = [".html"]
 skip = []
+# Elements kept byte-identical during extraction, as "tag" or "tag.class".
+# Use this for code blocks a publisher styles without <pre>.
+protect_blocks = []
 words_per_chunk = 2600
 require_latin = true
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from . import markup, spacing
 
 SEG_RE = re.compile(r"^@@@\s*SEG\s*0*(\d+)\s*@@@\s*$")
+VERBATIM_RE = re.compile(r"^@@@\s*VERBATIM\s*@@@$")
 CJK_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 
@@ -46,35 +47,45 @@ def write_chunks(cfg, name, segs, chunks):
 
 
 def load_marked(path):
-    """Return [(number, text)] from a seg or translation file."""
+    """Return [(number, text, verbatim)] from a seg or translation file.
+
+    A `@@@VERBATIM@@@` line as the first line of a segment body marks text the
+    translator deliberately kept in the source language (code, commands,
+    listing output). It is checked for placeholders like any other segment but
+    is exempt from the "not translated" and spacing rules.
+    """
     raw = Path(path).read_text(encoding="utf-8")
     parts, cur = [], None
     for line in raw.splitlines():
-        m = SEG_RE.match(line.strip())
+        stripped = line.strip()
+        m = SEG_RE.match(stripped)
         if m:
             if cur is not None:
                 parts.append(cur)
-            cur = [int(m.group(1)), []]
+            cur = [int(m.group(1)), [], False]
         elif cur is not None:
-            cur[1].append(line)
+            if not cur[1] and not cur[2] and VERBATIM_RE.match(stripped):
+                cur[2] = True
+            else:
+                cur[1].append(line)
     if cur is not None:
         parts.append(cur)
-    return [(n, " ".join(x.strip() for x in body if x.strip()))
-            for n, body in parts]
+    return [(n, " ".join(x.strip() for x in body if x.strip()), keep)
+            for n, body, keep in parts]
 
 
 def parse_translation(path, nseg):
-    """Parse a translated chunk file into a list of nseg strings."""
+    """Parse a translated chunk file into (texts, verbatim flags, error)."""
     path = Path(path)
     if not path.exists():
-        return None, "file missing"
+        return None, None, "file missing"
     parts = load_marked(path)
     if not parts:
-        return None, "no markers found"
+        return None, None, "no markers found"
     nums = [p[0] for p in parts]
     if nums != list(range(1, nseg + 1)):
-        return None, "segment numbers %s != 1..%d" % (nums[:8], nseg)
-    return [p[1] for p in parts], None
+        return None, None, "segment numbers %s != 1..%d" % (nums[:8], nseg)
+    return [p[1] for p in parts], [p[2] for p in parts], None
 
 
 def read_index(cfg):
@@ -116,7 +127,8 @@ def check_file(cfg, name):
     if info.get("sha256") and file_sha256(src_path) != info["sha256"]:
         return ["%s: source changed since extract, re-run `epubzh extract --force`"
                 % name]
-    work, atoms = markup.atomize(src_path.read_text(encoding="utf-8"))
+    work, atoms = markup.atomize(src_path.read_text(encoding="utf-8"),
+                                 cfg.protect_blocks)
     segs = markup.extract_segments(work, require_latin=cfg.require_latin)
     chunks = markup.chunk_segments(segs, cfg.words_per_chunk)
     problems = []
@@ -125,15 +137,17 @@ def check_file(cfg, name):
                         % (name, len(chunks), info["chunks"]))
     for ci, chunk in enumerate(chunks, 1):
         path = cfg.zh_dir / chunk_name(stem, ci)
-        translated, err = parse_translation(path, len(chunk))
+        translated, verbatim, err = parse_translation(path, len(chunk))
         if err:
             problems.append("%s chunk %d: %s" % (name, ci, err))
             continue
-        for seg, text in zip(chunk, translated):
+        for seg, text, keep in zip(chunk, translated, verbatim):
             bad = seg.check(text)
             if bad:
                 problems.append("%s chunk %d seg %d: %s"
                                 % (name, ci, seg.index + 1, bad))
+                continue
+            if keep:
                 continue
             body = markup.strip_placeholders(text).strip()
             short = len(body) <= 3 and " " not in body

@@ -102,7 +102,8 @@ def prompt(cfg, name=None, chunk=None):
 4. 写完后在项目目录运行以下命令自检并修正：
    %s check --config %s %s
 
-注意：占位符（%s / %s）必须原样保留；代码块保持英文；中英文之间加空格。
+注意：占位符（%s / %s）必须原样保留；代码、命令等整段保留原文的内容照抄，并在
+段标记下一行加 @@@VERBATIM@@@；中英文之间加空格。
 完成后只回复：已写入 %s，自检通过/剩余问题。""" % (
         cfg.root, cfg.guide_file, src, dst, _module_cmd(cfg), cfg.path, stem,
         "\u27e6", "\u27e7", dst))

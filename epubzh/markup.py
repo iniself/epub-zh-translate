@@ -35,6 +35,8 @@ VOID_TAGS = {
 
 PRE_RE = re.compile(r"<pre\b[^>]*>.*?</pre>", re.S)
 ATOM_RE = re.compile(r"\x00P(\d+)\x00")
+PROTECT_RE = re.compile(r"^<\s*([A-Za-z][A-Za-z0-9:_-]*)\b")
+CLASS_RE = re.compile(r"\bclass=\"([^\"]*)\"")
 TOKEN_RE = re.compile(
     r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<![^>]*>|<\?.*?\?>"
     r"|</?[A-Za-z][A-Za-z0-9:_-]*(?:[^<>]*?)?/?>|\x00P\d+\x00",
@@ -45,19 +47,119 @@ PH_RE = re.compile(PLACEHOLDER_OPEN + r"(/?\d+)" + PLACEHOLDER_CLOSE)
 STRAY_RE = re.compile("[%s%s]" % (PLACEHOLDER_OPEN, PLACEHOLDER_CLOSE))
 
 
-def atomize(src):
-    """Replace every <pre>...</pre> with a sentinel; return (work, atoms)."""
+def _parse_tag(raw):
+    m = TAGNAME_RE.match(raw)
+    name = (m.group(1).lower() if m else "")
+    closing = raw.startswith("</")
+    selfclose = raw.endswith("/>") or name in VOID_TAGS
+    return name, closing, selfclose
+
+
+def _match_close(tokens, i, j):
+    """Index of the tag closing the element opened at token i (or None)."""
+    name, _, _ = _parse_tag(tokens[i][1])
+    depth = 1
+    k = i + 1
+    while k < j:
+        kind, raw = tokens[k]
+        if kind == "tag" and not ATOM_RE.match(raw):
+            nm, closing, selfclose = _parse_tag(raw)
+            if nm == name:
+                if closing:
+                    depth -= 1
+                    if depth == 0:
+                        return k
+                elif not selfclose:
+                    depth += 1
+        k += 1
+    return None
+
+
+def _protect_matcher(specs):
+    """Predicate for start tags matching "tag" or "tag.class" specs."""
+    exact, classes = set(), set()
+    for spec in specs or ():
+        spec = str(spec).strip()
+        if not spec:
+            continue
+        if "." in spec:
+            tag, _, cls = spec.partition(".")
+            classes.add((tag.lower(), cls))
+        else:
+            exact.add(spec.lower())
+    if not exact and not classes:
+        return None
+
+    def match(raw):
+        if raw.startswith("</"):
+            return None
+        m = PROTECT_RE.match(raw)
+        if not m:
+            return None
+        name = m.group(1).lower()
+        if name in exact:
+            return True
+        if not classes:
+            return None
+        cm = CLASS_RE.search(raw)
+        if not cm:
+            return None
+        return any((name, cls) in classes for cls in cm.group(1).split())
+
+    return match
+
+
+def atomize(src, protect=()):
+    """Replace protected blocks with sentinels; return (work, atoms).
+
+    <pre> blocks are always protected. ``protect`` adds "tag" or "tag.class"
+    specs for elements that must stay byte-identical as well, which covers code
+    blocks that publishers style with their own classes instead of <pre>.
+    """
     atoms = []
 
     def rep(m):
         atoms.append(m.group(0))
         return "\x00P%d\x00" % (len(atoms) - 1)
 
-    return PRE_RE.sub(rep, src), atoms
+    work = PRE_RE.sub(rep, src)
+    match = _protect_matcher(protect)
+    if match is None:
+        return work, atoms
+    tokens = tokenize(work)
+    offsets, pos = [], 0
+    for _, txt in tokens:
+        offsets.append((pos, pos + len(txt)))
+        pos += len(txt)
+    spans, i, n = [], 0, len(tokens)
+    while i < n:
+        kind, raw = tokens[i]
+        if kind == "tag" and not ATOM_RE.match(raw) and match(raw):
+            _, _, selfclose = _parse_tag(raw)
+            end = i if selfclose else _match_close(tokens, i, n)
+            if end is not None:
+                spans.append((i, end))
+                i = end + 1
+                continue
+        i += 1
+    for first, last in reversed(spans):
+        start, end = offsets[first][0], offsets[last][1]
+        atoms.append(work[start:end])
+        work = work[:start] + "\x00P%d\x00" % (len(atoms) - 1) + work[end:]
+    return work, atoms
 
 
 def detatomize(work, atoms):
-    return ATOM_RE.sub(lambda m: atoms[int(m.group(1))], work)
+    def rep(m):
+        text = atoms[int(m.group(1))]
+        while True:
+            inner = ATOM_RE.search(text)
+            if not inner:
+                return text
+            text = (text[:inner.start()] + atoms[int(inner.group(1))]
+                    + text[inner.end():])
+
+    return ATOM_RE.sub(rep, work)
 
 
 def tokenize(work):
@@ -155,32 +257,6 @@ def extract_segments(work, warn=None, require_latin=True):
         pos += len(txt)
     n = len(tokens)
 
-    def parse_tag(raw):
-        m = TAGNAME_RE.match(raw)
-        name = (m.group(1).lower() if m else "")
-        closing = raw.startswith("</")
-        selfclose = raw.endswith("/>") or name in VOID_TAGS
-        return name, closing, selfclose
-
-    def match_close(i, j):
-        """Index of the tag closing the element opened at i (or None)."""
-        name, _, _ = parse_tag(tokens[i][1])
-        depth = 1
-        k = i + 1
-        while k < j:
-            kind, raw = tokens[k]
-            if kind == "tag" and not ATOM_RE.match(raw):
-                nm, closing, selfclose = parse_tag(raw)
-                if nm == name:
-                    if closing:
-                        depth -= 1
-                        if depth == 0:
-                            return k
-                    elif not selfclose:
-                        depth += 1
-            k += 1
-        return None
-
     def visible_text(i, j):
         chunk = "".join(tokens[k][1] for k in range(i, j))
         return html.unescape(re.sub(r"<[^>]*>", "", ATOM_RE.sub("", chunk))).strip()
@@ -202,11 +278,11 @@ def extract_segments(work, warn=None, require_latin=True):
     def process_inline(i, j):
         """Consume the inline element starting at token i. Returns next index."""
         kind, raw = tokens[i]
-        name, closing, selfclose = parse_tag(raw)
+        name, closing, selfclose = _parse_tag(raw)
         if name in INLINE_VERBATIM or selfclose:
             add_placeholder(i, raw)
             return i + 1
-        c = match_close(i, j)
+        c = _match_close(tokens, i, j)
         if c is None:
             add_placeholder(i, raw)
             return i + 1
@@ -230,7 +306,7 @@ def extract_segments(work, warn=None, require_latin=True):
                 add_text(i, raw)
                 i += 1
             else:
-                name, _, _ = parse_tag(raw)
+                name, _, _ = _parse_tag(raw)
                 if ATOM_RE.match(raw) or name not in INLINE_PAIRED:
                     add_placeholder(i, raw)
                     i += 1
@@ -269,7 +345,7 @@ def extract_segments(work, warn=None, require_latin=True):
             i += 1
             continue
         if kind == "tag" and not ATOM_RE.match(raw):
-            name, closing, selfclose = parse_tag(raw)
+            name, closing, selfclose = _parse_tag(raw)
             if name in BLOCK_TAGS or (name not in INLINE_PAIRED
                                       and name not in INLINE_VERBATIM):
                 flush()

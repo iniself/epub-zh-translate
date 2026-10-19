@@ -34,14 +34,15 @@ def unpack(cfg, force=False):
 def _merge_file(cfg, name):
     src_path = cfg.source_dir / cfg.text_dir / name
     source = src_path.read_text(encoding="utf-8")
-    work, atoms = markup.atomize(source)
+    work, atoms = markup.atomize(source, cfg.protect_blocks)
     segs = markup.extract_segments(work, require_latin=cfg.require_latin)
     chunk_list = markup.chunk_segments(segs, cfg.words_per_chunk)
     translations = []
+    verbatim_flags = []
     stem = Path(name).stem
     for ci, chunk in enumerate(chunk_list, 1):
         path = cfg.zh_dir / chunks.chunk_name(stem, ci)
-        translated, err = chunks.parse_translation(path, len(chunk))
+        translated, verbatim, err = chunks.parse_translation(path, len(chunk))
         if err:
             return None, "chunk %d: %s" % (ci, err), 0
         for seg, text in zip(chunk, translated):
@@ -49,6 +50,7 @@ def _merge_file(cfg, name):
             if bad:
                 return None, "chunk %d seg %d: %s" % (ci, seg.index + 1, bad), 0
         translations.extend(translated)
+        verbatim_flags.extend(verbatim)
     merged = markup.apply_segments(work, segs, translations)
     if cfg.spacing:
         merged = spacing.spacing(merged, cfg.protect_tags)
@@ -57,7 +59,9 @@ def _merge_file(cfg, name):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(merged, encoding="utf-8")
     untranslated = 0
-    for seg, text in zip(segs, translations):
+    for seg, text, keep in zip(segs, translations, verbatim_flags):
+        if keep:
+            continue
         body = markup.strip_placeholders(text).strip()
         short = len(body) <= 3 and " " not in body
         if not short and re.search("[A-Za-z]", body) and not re.search(
@@ -267,6 +271,7 @@ def verify_epub(path):
 
 def apply_metadata(cfg):
     toc.localize_toc(cfg)
+    toc.localize_nav(cfg)
     toc.localize_metadata(cfg)
     pre.apply(cfg)
 
