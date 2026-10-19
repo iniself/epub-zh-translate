@@ -11,10 +11,46 @@ from pathlib import Path
 from . import chunks, markup, pre, spacing, toc
 
 
+def _well_formed(text):
+    try:
+        ET.fromstring(text.encode("utf-8"))
+        return True
+    except ET.ParseError:
+        return False
+
+
+def normalize_sources(cfg):
+    """Escape bare '>' in the unpacked source documents (idempotent).
+
+    A literal '>' in a text run is legal XML, but the extractor renders it as
+    "&gt;", so the byte-exact round trip fails and extraction is refused.
+    Escaping it once, in src/, is XML-equivalent and fixes the whole project.
+    Only the documents the pipeline translates are touched; <pre> and
+    ``protect_blocks`` content is copied verbatim and is left untouched.
+    """
+    total = touched = 0
+    for path in cfg.html_files():
+        original = path.read_text(encoding="utf-8")
+        fixed, replaced = markup.normalize_source(original, cfg.protect_blocks)
+        if not replaced:
+            continue
+        if not _well_formed(fixed):
+            raise SystemExit(
+                "refusing to write %s: document is not well-formed XML "
+                "(the pipeline needs well-formed documents)" % path.name)
+        path.write_text(fixed, encoding="utf-8")
+        total += replaced
+        touched += 1
+    if touched:
+        print("normalize: escaped %d bare '>' in %d file(s)" % (total, touched))
+    return total
+
+
 def unpack(cfg, force=False):
     """Extract the source EPUB into source_dir when source is an archive."""
     if cfg.source.is_dir():
         print("source is already a directory: %s" % cfg.source)
+        normalize_sources(cfg)
         return cfg.source
     if not cfg.source.exists():
         raise SystemExit("source not found: %s" % cfg.source)
@@ -22,12 +58,14 @@ def unpack(cfg, force=False):
         if not force:
             print("source_dir already populated: %s (use --force to replace)"
                   % cfg.source_dir)
+            normalize_sources(cfg)
             return cfg.source_dir
         shutil.rmtree(cfg.source_dir)
     cfg.source_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(cfg.source) as z:
         z.extractall(cfg.source_dir)
     print("unpacked %s -> %s" % (cfg.source, cfg.source_dir))
+    normalize_sources(cfg)
     return cfg.source_dir
 
 

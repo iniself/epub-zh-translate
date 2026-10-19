@@ -6,6 +6,10 @@ The translator must never see or modify structural markup:
 - every element tag is copied verbatim from the source.
 - only maximal text runs inside block elements are replaced.
 - inline markup inside a run is hidden behind placeholders like U+27E6 0 U+27E7.
+
+A literal '>' in a text run is legal XML but is re-rendered as "&gt;", which
+breaks the byte-exact round trip, so such runs are escaped up front by
+``normalize_source`` instead.
 """
 import html
 import re
@@ -33,13 +37,17 @@ VOID_TAGS = {
     "area", "col", "embed",
 }
 
-PRE_RE = re.compile(r"<pre\b[^>]*>.*?</pre>", re.S)
+# Tag internals: quoted values may contain '>' (legal XML, and common in code
+# snippets stored in attributes), so the scanner has to stay quote aware.
+ATTRS_RE = r"(?:\"[^\"]*\"|'[^']*'|[^<>\"'])*"
+
+PRE_RE = re.compile(r"<pre\b" + ATTRS_RE + r">.*?</pre>", re.S)
 ATOM_RE = re.compile(r"\x00P(\d+)\x00")
 PROTECT_RE = re.compile(r"^<\s*([A-Za-z][A-Za-z0-9:_-]*)\b")
 CLASS_RE = re.compile(r"\bclass=\"([^\"]*)\"")
 TOKEN_RE = re.compile(
     r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<![^>]*>|<\?.*?\?>"
-    r"|</?[A-Za-z][A-Za-z0-9:_-]*(?:[^<>]*?)?/?>|\x00P\d+\x00",
+    r"|</?[A-Za-z][A-Za-z0-9:_-]*" + ATTRS_RE + r"/?>|\x00P\d+\x00",
     re.S,
 )
 TAGNAME_RE = re.compile(r"^</?\s*([A-Za-z][A-Za-z0-9:_-]*)")
@@ -160,6 +168,79 @@ def detatomize(work, atoms):
                     + text[inner.end():])
 
     return ATOM_RE.sub(rep, work)
+
+
+def _tag_end(text, i):
+    """Index just past the '>' ending the tag that starts at i (quote aware)."""
+    j, n, quote = i + 1, len(text), None
+    while j < n:
+        ch = text[j]
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == ">":
+            return j + 1
+        j += 1
+    return n
+
+
+def _opaque_end(text, i):
+    """Index just past a comment, CDATA, PI or declaration at i, else None."""
+    for opener, closer in (("<!--", "-->"), ("<![CDATA[", "]]>"), ("<?", "?>")):
+        if text.startswith(opener, i):
+            j = text.find(closer, i)
+            return len(text) if j < 0 else j + len(closer)
+    if text.startswith("<!", i):
+        j = text.find(">", i)
+        return len(text) if j < 0 else j + 1
+    return None
+
+
+def escape_bare_gt(text):
+    """Escape '>' in text runs; tags, comments, CDATA and PIs stay intact.
+
+    Returns (text, replacements). Attribute values keep their '>' because tags
+    are copied verbatim by the extractor.
+    """
+    out, i, n, count = [], 0, len(text), 0
+    while i < n:
+        if text[i] == "<":
+            end = _opaque_end(text, i)
+            if end is None:
+                end = _tag_end(text, i)
+            out.append(text[i:end])
+            i = end
+            continue
+        j = text.find("<", i)
+        j = n if j < 0 else j
+        chunk = text[i:j]
+        if ">" in chunk:
+            count += chunk.count(">")
+            chunk = chunk.replace(">", "&gt;")
+        out.append(chunk)
+        i = j
+    return "".join(out), count
+
+
+def normalize_source(text, protect=()):
+    """Escape bare '>' in text runs so extraction can round-trip.
+
+    Publishers sometimes leave '>' unescaped in running text ("score > 0.8").
+    That is legal XML, but rendering the translated segment turns it into
+    "&gt;", which fails the byte-exact round trip. Escaping it up front is
+    XML-equivalent and keeps the rest of the pipeline unchanged. <pre> and
+    ``protect`` blocks are copied verbatim by the extractor, so their content
+    is left alone, as are comments, CDATA sections and processing instructions.
+
+    Returns (text, replacements); ``text`` is the input when nothing changed.
+    """
+    work, atoms = atomize(text, protect)
+    fixed, count = escape_bare_gt(work)
+    if not count:
+        return text, 0
+    return detatomize(fixed, atoms), count
 
 
 def tokenize(work):

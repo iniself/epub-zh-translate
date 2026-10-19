@@ -59,6 +59,10 @@ work：/path/to/books/mybook-zh-project/work
 - 代码块：保持英文原样。`<pre>` 之外的代码块（发布方用 `<div class="ProgramCode">`
   之类自定义类排版）在 `book.toml` 的 `[extract] protect_blocks = ["div.ProgramCode"]`
   里声明，抽取时整块冻结、不进入翻译队列；元素名不固定，按书检查后填写。
+- 未转义的 `>`：部分出版社在正文或属性值里留了裸 `>`（例如 `score > 0.8`），
+  XML 合法但会让回环校验失败。`unpack`/`extract` 会自动把这类 `>` 转义成
+  `&gt;`（XML 等价，渲染结果不变），`<pre>` 和 `protect_blocks` 里的内容不动。
+  不需要手工处理，也不需要额外脚本。
 - 夹在 `<p>` 里的零星代码行无法自动识别：翻译时原样抄回，并在该段标记下一行
   加 `@@@VERBATIM@@@`，`check` 就不会把它算成“未翻译”。
 - 行内代码、命令、API 名称、库名、类名、函数名、参数名、文件名、URL：保持英文。

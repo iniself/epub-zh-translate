@@ -42,6 +42,7 @@ def cmd_extract(args):
     cfg = config.load(args.config)
     if not cfg.source_dir.exists():
         raise SystemExit("source_dir not found: %s (run `epubzh unpack`)" % cfg.source_dir)
+    assemble.normalize_sources(cfg)
     existing = list(cfg.segs_dir.glob("*.txt")) if cfg.segs_dir.exists() else []
     existing_zh = list(cfg.zh_dir.glob("*.txt")) if cfg.zh_dir.exists() else []
     if (existing or existing_zh) and not args.force:
