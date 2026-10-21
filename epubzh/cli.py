@@ -1,26 +1,94 @@
 #!/usr/bin/env python3
 """Command line interface for the epubzh pipeline."""
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from . import assemble, chunks, config, guide, markup, pre, terms_audit, toc
 
 
+def _shown(base, path):
+    """Display a path relative to base when it lives there."""
+    try:
+        rel = os.path.relpath(str(path), str(base))
+    except ValueError:
+        return str(path)
+    return str(path) if rel.startswith("..") else rel
+
+
+def _source_candidates(base, value, cfg_path, output_abs):
+    """Directories to try for a relative --source, in priority order."""
+    raw = Path(value).expanduser()
+    if raw.is_absolute():
+        return [raw]
+    dirs = [base, cfg_path.parent.parent, cfg_path.parent]
+    if output_abs is not None:
+        dirs.append(output_abs.parent)
+    seen, out = set(), []
+    for d in dirs:
+        d = Path(d).expanduser().resolve()
+        if d in seen:
+            continue
+        seen.add(d)
+        out.append(d / raw)
+    return out
+
+
 def cmd_init(args):
-    cfg_path = Path(args.config).expanduser().resolve()
-    source = Path(args.source).expanduser().resolve()
-    if not source.exists():
-        raise SystemExit("source not found: %s" % source)
-    if source.is_dir():
-        source_dir = str(source)
+    base = Path(args.base).expanduser().resolve() if args.base else Path.cwd()
+    if not args.base:
+        relative = [name for name, value in (("--config", args.config),
+                                             ("--source", args.source),
+                                             ("--output", args.output))
+                    if value and not Path(value).expanduser().is_absolute()]
+        if relative:
+            raise SystemExit(
+                "relative path without --base: %s\n"
+                "pass --base \"<session directory>\" (the directory where opencode "
+                "was started) or use absolute paths" % ", ".join(relative))
+
+    cfg_path = config.resolve_path(base, args.config)
+    safe = (args.title or "translated").replace("/", "-")
+    if args.output:
+        output_abs = config.resolve_path(base, args.output)
     else:
-        source_dir = args.source_dir
-    source_title = args.source_title or args.title
+        output_abs = cfg_path.parent / "out" / ("%s.epub" % safe)
+
+    candidates = _source_candidates(base, args.source, cfg_path, output_abs)
+    source = next((p for p in candidates if p.exists()), None)
+    if source is None:
+        lines = ["source not found: %s" % args.source, "searched:"]
+        lines.extend("  %s" % p for p in candidates)
+        for directory in dict.fromkeys(p.parent for p in candidates):
+            if directory.is_dir():
+                epubs = sorted(p.name for p in directory.glob("*.epub"))
+                if epubs:
+                    lines.append("epubs in %s: %s" % (directory, ", ".join(epubs)))
+        lines.append("hint: keep the source epub next to the output file and "
+                     "pass only its file name")
+        raise SystemExit("\n".join(lines))
+
+    if source.is_dir():
+        source_dir_abs = source
+    else:
+        source_dir_abs = config.resolve_path(cfg_path.parent, args.source_dir)
+    work_abs = config.resolve_path(cfg_path.parent, args.work)
+
     profile = config.check_profile(args.profile)
+    print("base    = %s" % base)
+    print("config  = %-24s -> %s" % (_shown(base, cfg_path), cfg_path))
+    print("source  = %-24s -> %s" % (args.source, source))
+    print("output  = %-24s -> %s" % (args.output or "(default)", output_abs))
+    print("profile = %s (%d words per chunk, %s)"
+          % (profile, config.PROFILES[profile]["words_per_chunk"],
+             "max %d segments" % config.PROFILES[profile]["max_segments_per_chunk"]
+             if config.PROFILES[profile]["max_segments_per_chunk"]
+             else "no segment cap"))
     config.write_default(cfg_path, source, args.title, author=args.author,
-                         work=args.work, output=args.output, source_dir=source_dir,
-                         source_title=source_title, profile=profile)
+                         work=str(work_abs), output=str(output_abs),
+                         source_dir=str(source_dir_abs),
+                         source_title=args.source_title, profile=profile)
     cfg = config.load(cfg_path)
     guide.seed_terms(cfg)
     if source.is_file():
@@ -209,9 +277,16 @@ def build_parser():
         description="Markup-safe EPUB translation pipeline (no third-party deps).")
     parser.add_argument("--config", default="book.toml",
                         help="config file (default: book.toml)")
+    parser.add_argument("--base", default=None,
+                        help="base directory for relative paths; pass the "
+                             "directory where opencode was started instead of "
+                             "relying on the current directory")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("init", help="create book.toml, unpack source, seed glossary")
+    p.add_argument("--base", default=argparse.SUPPRESS,
+                   help="session directory used to resolve relative paths "
+                        "(see the global --base)")
     p.add_argument("--source", required=True, help="source .epub file or directory")
     p.add_argument("--title", required=True, help="translated book title")
     p.add_argument("--author", default="", help="author name")
@@ -287,21 +362,32 @@ def build_parser():
     return parser
 
 
-def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    # Accept --config after the subcommand as well as before it.
-    if "--config" in argv:
-        i = argv.index("--config")
+def _move_option(argv, name):
+    """Move a global option (and its value) in front of the subcommand."""
+    if name in argv:
+        i = argv.index(name)
         pair = argv[i:i + 2]
         del argv[i:i + 2]
-        argv = pair + argv
-    else:
-        for i, value in enumerate(argv):
-            if value.startswith("--config="):
-                argv.insert(0, argv.pop(i))
-                break
+        return pair + argv
+    for i, value in enumerate(argv):
+        if value.startswith(name + "="):
+            argv.insert(0, argv.pop(i))
+            break
+    return argv
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # Accept --base and --config after the subcommand as well as before it.
+    for option in ("--base", "--config"):
+        argv = _move_option(argv, option)
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.base:
+        base = Path(args.base).expanduser().resolve()
+        args.config = str(config.resolve_path(base, args.config))
+        if getattr(args, "epub", None):
+            args.epub = str(config.resolve_path(base, args.epub))
     needs_config = args.command != "init" and not (
         args.command == "verify" and getattr(args, "epub", None))
     if needs_config and not Path(args.config).exists():

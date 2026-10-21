@@ -2,6 +2,7 @@
 """Configuration loading and project paths."""
 from dataclasses import dataclass, field
 from pathlib import Path
+import os
 import tomllib
 
 
@@ -31,6 +32,24 @@ def check_profile(value):
 def _p(base, value):
     p = Path(value).expanduser()
     return p if p.is_absolute() else (base / p)
+
+
+def resolve_path(base, value):
+    """Resolve a CLI path against base. Absolute values always win."""
+    return _p(Path(base).expanduser(), value)
+
+
+def relpath_or_abs(path, root):
+    """Prefer a path relative to root so book.toml stays portable.
+
+    Falls back to an absolute path when the two locations are on different
+    volumes (Windows) or when relpath is not meaningful.
+    """
+    target = Path(path).expanduser().resolve()
+    try:
+        return os.path.relpath(str(target), str(Path(root).expanduser().resolve()))
+    except ValueError:
+        return str(target)
 
 
 def _as_list(value, default):
@@ -228,9 +247,17 @@ def write_default(path, source, title, author="", work="work", output="",
         raise SystemExit("refusing to overwrite existing config: %s" % path)
     profile = check_profile(profile)
     preset = PROFILES[profile]
+    root = path.parent
+    # Store paths relative to the project directory: no home directory in
+    # book.toml, and the project stays movable.
+    source = relpath_or_abs(source, root)
+    source_dir = relpath_or_abs(source_dir, root)
+    work = relpath_or_abs(work, root)
     if not output:
         safe = (title or "translated").replace("/", "-")
         output = "out/%s.epub" % safe
+    else:
+        output = relpath_or_abs(output, root)
     text = """[book]
 source = "%s"
 source_dir = "%s"

@@ -1,8 +1,10 @@
 [book]
-source = "/absolute/path/to/source.epub"
+# Relative paths below are resolved against this file's directory, so the
+# project can be moved. Keep them relative to avoid leaking a home directory.
+source = "../source.epub"
 source_dir = "src"
 work = "work"
-output = "out/translated.epub"
+output = "../out/translated.epub"
 title = "中文书名"
 source_title = "Original English Title"
 author = "Author Name"
