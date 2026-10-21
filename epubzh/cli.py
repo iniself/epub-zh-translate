@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import assemble, chunks, config, guide, markup, pre, toc
+from . import assemble, chunks, config, guide, markup, pre, terms_audit, toc
 
 
 def cmd_init(args):
@@ -17,16 +17,20 @@ def cmd_init(args):
     else:
         source_dir = args.source_dir
     source_title = args.source_title or args.title
+    profile = config.check_profile(args.profile)
     config.write_default(cfg_path, source, args.title, author=args.author,
                          work=args.work, output=args.output, source_dir=source_dir,
-                         source_title=source_title)
+                         source_title=source_title, profile=profile)
     cfg = config.load(cfg_path)
     guide.seed_terms(cfg)
     if source.is_file():
         assemble.unpack(cfg)
     wrapper = Path(__file__).resolve().parent.parent / "epubzh-run"
     tool = str(wrapper) if wrapper.exists() else "python3 -m epubzh"
-    print("\ncreated %s" % cfg_path)
+    print("\ncreated %s (profile: %s, %d words per chunk%s)"
+          % (cfg_path, profile, cfg.words_per_chunk,
+             ", max %d segments" % cfg.max_segments_per_chunk
+             if cfg.max_segments_per_chunk else ", no segment cap"))
     print("next:")
     print("  %s extract --config %s" % (tool, cfg_path))
     print("  %s guide   --config %s" % (tool, cfg_path))
@@ -40,6 +44,25 @@ def cmd_unpack(args):
 
 def cmd_extract(args):
     cfg = config.load(args.config)
+    if getattr(args, "profile", None):
+        profile = config.check_profile(args.profile)
+        if profile != cfg.profile:
+            existing_zh = (list(cfg.zh_dir.glob("*.txt"))
+                           if cfg.zh_dir.exists() else [])
+            if existing_zh and not args.force:
+                raise SystemExit(
+                    "refusing to switch profile to %r: %d translated chunk(s) "
+                    "exist and would no longer match\n"
+                    "(use --force only if you intend to retranslate)"
+                    % (profile, len(existing_zh)))
+            config.set_profile(cfg.path, profile)
+            cfg = config.load(cfg.path)
+            print("profile: %s%s" % (
+                cfg.profile,
+                " (%d words, max %d segments)" % (cfg.words_per_chunk,
+                                                  cfg.max_segments_per_chunk)
+                if cfg.max_segments_per_chunk
+                else " (%d words, no segment cap)" % cfg.words_per_chunk))
     if not cfg.source_dir.exists():
         raise SystemExit("source_dir not found: %s (run `epubzh unpack`)" % cfg.source_dir)
     assemble.normalize_sources(cfg)
@@ -68,12 +91,14 @@ def cmd_extract(args):
         rebuilt = markup.apply_segments(work, segs, [s.text for s in segs])
         if rebuilt != work:
             raise SystemExit("round-trip mismatch: %s (extraction is unsafe)" % name)
-        chunk_list = markup.chunk_segments(segs, cfg.words_per_chunk)
+        chunk_list = markup.chunk_segments(segs, cfg.words_per_chunk,
+                                           cfg.max_segments_per_chunk)
         chunks.write_chunks(cfg, name, segs, chunk_list)
         words = sum(markup.segment_words(s.text) for s in segs)
         index[name] = {
             "segments": len(segs),
             "chunks": len(chunk_list),
+            "chunk_segments": [len(c) for c in chunk_list],
             "words": words,
             "sha256": chunks.file_sha256(path),
         }
@@ -87,8 +112,8 @@ def cmd_extract(args):
     toc.write_toc_tsv(cfg)
     pre.collect(cfg)
     guide.seed_terms(cfg)
-    print("files=%d segments=%d chunks=%d words=%d"
-          % (len(index), total_segs, total_chunks, total_words))
+    print("profile=%s files=%d segments=%d chunks=%d words=%d"
+          % (cfg.profile, len(index), total_segs, total_chunks, total_words))
     if warnings:
         print("warnings: %d" % len(warnings))
         for name, warning in warnings[:20]:
@@ -106,11 +131,16 @@ def cmd_check(args):
     names = [n for n in sorted(index) if not args.only or args.only in n]
     if not names:
         raise SystemExit("no files match %r" % args.only)
+    if args.chunk and len(names) != 1:
+        raise SystemExit("--chunk needs exactly one matching file, matched %d"
+                         % len(names))
     all_problems = []
     for name in names:
-        problems = chunks.check_file(cfg, name)
+        problems = chunks.check_file(cfg, name, only_chunk=args.chunk)
         all_problems.extend(problems)
         mark = "OK" if not problems else "%d problem(s)" % len(problems)
+        if args.chunk:
+            mark += " (chunk %d)" % args.chunk
         print("%-38s %s" % (name, mark))
     print("\n%d file(s), %d problem(s)" % (len(names), len(all_problems)))
     for problem in all_problems[:80]:
@@ -159,7 +189,18 @@ def cmd_guide(args):
 
 def cmd_prompt(args):
     cfg = config.load(args.config)
-    guide.prompt(cfg, args.name, args.chunk)
+    guide.prompt(cfg, args.name, args.chunk, stdout=args.stdout,
+                 full=args.full, force=args.force)
+
+
+def cmd_terms_audit(args):
+    cfg = config.load(args.config)
+    terms_audit.refresh_introduced(cfg)
+    rows, hits, total = terms_audit.audit(cfg, only=args.only,
+                                          strict=args.strict, limit=args.limit)
+    if args.strict and total > hits:
+        return 1
+    return 0
 
 
 def build_parser():
@@ -178,6 +219,10 @@ def build_parser():
     p.add_argument("--work", default="work", help="work directory")
     p.add_argument("--output", default="", help="output epub path")
     p.add_argument("--source-dir", default="src", help="unpack directory for source epub")
+    p.add_argument("--profile", default=config.DEFAULT_PROFILE,
+                   choices=sorted(config.PROFILES),
+                   help="chunk preset: large (2600 words, no cap) or small "
+                        "(1200 words, max 40 segments)")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("unpack", help="unpack the source epub")
@@ -186,6 +231,8 @@ def build_parser():
 
     p = sub.add_parser("extract", help="extract translatable segments and chunk them")
     p.add_argument("--force", action="store_true", help="re-extract even if work exists")
+    p.add_argument("--profile", choices=sorted(config.PROFILES),
+                   help="switch the chunk preset before re-extracting")
     p.set_defaults(func=cmd_extract)
 
     p = sub.add_parser("status", help="show translation progress")
@@ -193,7 +240,17 @@ def build_parser():
 
     p = sub.add_parser("check", help="validate translated chunks")
     p.add_argument("only", nargs="?", help="only files whose name contains this string")
+    p.add_argument("--chunk", type=int, help="validate a single chunk only")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("terms-audit",
+                       help="check glossary terms against translated chunks")
+    p.add_argument("--only", help="only files whose name contains this string")
+    p.add_argument("--limit", type=int, default=20,
+                   help="how many terms to list (default: 20)")
+    p.add_argument("--strict", action="store_true",
+                   help="exit non-zero when any term is missing")
+    p.set_defaults(func=cmd_terms_audit)
 
     p = sub.add_parser("merge", help="assemble translated files without packaging")
     p.add_argument("--only", help="only merge files whose name contains this string")
@@ -217,9 +274,15 @@ def build_parser():
     p = sub.add_parser("guide", help="render work/TRANSLATION_GUIDE.md from the glossary")
     p.set_defaults(func=cmd_guide)
 
-    p = sub.add_parser("prompt", help="print a subagent prompt for a chunk")
+    p = sub.add_parser("prompt", help="write a subagent prompt for a chunk")
     p.add_argument("name", nargs="?", help="file stem, for example chapter-1")
     p.add_argument("--chunk", type=int, help="chunk number (1-based)")
+    p.add_argument("--stdout", action="store_true",
+                   help="print the prompt instead of writing work/prompts/")
+    p.add_argument("--full", action="store_true",
+                   help="use the full translation guide regardless of profile")
+    p.add_argument("--force", action="store_true",
+                   help="rewrite the prompt file even if it is unchanged")
     p.set_defaults(func=cmd_prompt)
     return parser
 
