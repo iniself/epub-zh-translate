@@ -75,6 +75,22 @@ def load_marked(path):
             for n, body, keep in parts]
 
 
+def _ranges(nums):
+    """Compact rendering of sorted numbers: 1-5, 8, 11-29."""
+    if not nums:
+        return ""
+    out = []
+    start = prev = nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        out.append(str(start) if start == prev else "%d-%d" % (start, prev))
+        start = prev = n
+    out.append(str(start) if start == prev else "%d-%d" % (start, prev))
+    return ", ".join(out)
+
+
 def _marker_problems(parts, nseg):
     """Point at duplicated, missing, and out-of-range segment markers."""
     counts = Counter(p[0] for p in parts)
@@ -83,11 +99,11 @@ def _marker_problems(parts, nseg):
     extra = sorted(n for n in counts if n < 1 or n > nseg)
     bits = []
     if dup:
-        bits.append("duplicated: %s" % ", ".join(str(n) for n in dup))
+        bits.append("duplicated: %s" % _ranges(dup))
     if missing:
-        bits.append("missing: %s" % ", ".join(str(n) for n in missing))
+        bits.append("missing: %s" % _ranges(missing))
     if extra:
-        bits.append("out of range: %s" % ", ".join(str(n) for n in extra))
+        bits.append("out of range: %s" % _ranges(extra))
     detail = "; ".join(bits) or "order is wrong"
     if dup:
         # Show the duplicated body so the extra marker is easy to find.
