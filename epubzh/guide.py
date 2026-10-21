@@ -2,10 +2,12 @@
 """Translation guide rendering and per-chunk subagent prompts."""
 import csv
 import re
+import shlex
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from . import config as config_mod
-from . import chunks, markup
+from . import chunks, markup, toc
 
 # Cap the glossary injected into a small-profile prompt. Large profiles get
 # the full guide (and therefore the full glossary) instead.
@@ -60,7 +62,7 @@ def render_guide(cfg):
 
 def _module_cmd(cfg):
     package_root = Path(__file__).resolve().parent.parent
-    return ("PYTHONPATH=\"%s\" python3 -m epubzh" % package_root)
+    return "PYTHONPATH=%s python3 -m epubzh" % shlex.quote(str(package_root))
 
 
 def _term_pattern(term):
@@ -96,18 +98,70 @@ def _read_introduced(path):
             if line.strip()]
 
 
+def _spine_order(cfg):
+    """Source file name -> reading position, taken from the OPF spine.
+
+    File names do not follow reading order (a part frontmatter can sort after
+    the chapter it introduces), so term bookkeeping must use the spine.
+    """
+    try:
+        opf = toc.find_opf(cfg)
+    except Exception:
+        return {}
+    if not opf:
+        return {}
+    try:
+        root = ET.fromstring(Path(opf).read_text(encoding="utf-8"))
+    except (ET.ParseError, OSError):
+        return {}
+    manifest = {}
+    for el in root.iter():
+        if el.tag.rsplit("}", 1)[-1] != "item":
+            continue
+        mid, href = el.get("id"), el.get("href")
+        if mid and href:
+            manifest[mid] = Path(href).name
+    order = {}
+    for el in root.iter():
+        if el.tag.rsplit("}", 1)[-1] != "itemref":
+            continue
+        name = manifest.get(el.get("idref"))
+        if name and name not in order:
+            order[name] = len(order)
+    return order
+
+
+def _chunk_rank(path, order):
+    """(spine position, chunk number) for a translated chunk file."""
+    m = re.match(r"(.+)\.(\d+)$", Path(path).stem)
+    if not m:
+        return None
+    stem, number = m.group(1), int(m.group(2))
+    for name, rank in order.items():
+        if Path(name).stem == stem:
+            return (rank, number)
+    return None
+
+
 def introduced(cfg, refresh=False, exclude=None):
     """English terms already rendered as「中文（English）」in earlier chunks.
 
-    ``exclude`` is the chunk currently being translated. Its own older copy
-    must not count as "earlier context", otherwise retranslating a chunk tells
-    the model that terms it should introduce are already introduced.
+    ``exclude`` is the chunk currently being translated. Only chunks that come
+    before it in reading order count as earlier context: its own older copy,
+    and chapters that follow it, must not be treated as already introduced.
     """
     path = cfg.introduced_tsv
     zh_files = sorted(cfg.zh_dir.glob("*.txt")) if cfg.zh_dir.exists() else []
     if exclude is not None:
         ex = Path(exclude).resolve()
-        zh_files = [p for p in zh_files if p.resolve() != ex]
+        order = _spine_order(cfg)
+        ex_rank = _chunk_rank(ex, order) if order else None
+        if ex_rank is not None:
+            zh_files = [p for p in zh_files
+                        if (_chunk_rank(p, order) or (10 ** 9, 0)) < ex_rank]
+        else:
+            # Without a usable spine, fall back to excluding the chunk itself.
+            zh_files = [p for p in zh_files if p.resolve() != ex]
     if exclude is None and path.exists() and not refresh and zh_files:
         newest = max(p.stat().st_mtime for p in zh_files)
         if path.stat().st_mtime >= newest:
@@ -214,7 +268,7 @@ def _contract(cfg, stem, chunk, dst):
    整块。改完再跑一次。
 5. 同一分块连续 3 次自检不过就停下来报告问题，不要继续重试。
 6. 完成后只回复一行：`已写入 %s`
-""" % (_module_cmd(cfg), cfg.path, stem, chunk, dst)
+""" % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk, dst)
 
 
 def _build_prompt(cfg, name, chunk, index, full=False):
@@ -388,4 +442,4 @@ def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False):
     print("→ 交给一个 subagent 执行（一个分块一个 subagent），"
           "不要在主会话里直接翻译")
     print("→ 自检：%s check --config %s %s --chunk %d"
-          % (_module_cmd(cfg), cfg.path, stem, chunk))
+          % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk))

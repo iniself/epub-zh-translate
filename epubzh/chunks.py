@@ -240,11 +240,17 @@ def check_file(cfg, name, only_chunk=None):
         if err:
             problems.append("%s chunk %d: %s" % (name, ci, err))
             continue
+        # Report chunk-local numbers, matching the @@@SEG nnn@@@ markers the
+        # translator edits. Document-wide numbers would point at the wrong
+        # line whenever the chunk is not the first one.
+        offset = chunk[0].index
+        width = len(chunk)
         for seg, text, keep in zip(chunk, translated, verbatim):
+            pos = seg.index + 1 - offset
             bad = seg.check(text)
             if bad:
-                problems.append("%s chunk %d seg %d: %s%s"
-                                % (name, ci, seg.index + 1, bad,
+                problems.append("%s chunk %d seg %d/%d: %s%s"
+                                % (name, ci, pos, width, bad,
                                    _context(seg, text)))
                 continue
             if keep:
@@ -253,13 +259,13 @@ def check_file(cfg, name, only_chunk=None):
             short = len(body) <= 3 and " " not in body
             if cfg.require_latin and re.search("[A-Za-z]", seg.text) \
                     and not CJK_RE.search(body) and not short:
-                problems.append("%s chunk %d seg %d: not translated%s"
-                                % (name, ci, seg.index + 1,
+                problems.append("%s chunk %d seg %d/%d: not translated%s"
+                                % (name, ci, pos, width,
                                    _context(seg, text)))
             missing = spacing.has_missing_space(text)
             if missing:
-                problems.append("%s chunk %d seg %d: missing space around Latin, "
+                problems.append("%s chunk %d seg %d/%d: missing space around Latin, "
                                 "e.g. %s%s"
-                                % (name, ci, seg.index + 1, missing[:3],
+                                % (name, ci, pos, width, missing[:3],
                                    _context(seg, text)))
     return problems
