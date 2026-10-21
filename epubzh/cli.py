@@ -93,6 +93,13 @@ def cmd_init(args):
     guide.seed_terms(cfg)
     if source.is_file():
         assemble.unpack(cfg)
+        layout = config.detect_extract_layout(cfg)
+        if layout:
+            text_dir, extensions = layout
+            if text_dir != cfg.text_dir or extensions != cfg.extensions:
+                config.set_extract_layout(cfg.path, text_dir, extensions)
+                cfg = config.load(cfg_path)
+                print("layout  = %s (%s)" % (text_dir, ", ".join(extensions)))
     wrapper = Path(__file__).resolve().parent.parent / "epubzh-run"
     tool = str(wrapper) if wrapper.exists() else "python3 -m epubzh"
     print("\ncreated %s (profile: %s, %d words per chunk%s)"

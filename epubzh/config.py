@@ -318,6 +318,51 @@ def _profile_line(key, profile, preset):
     return "%s = %s\n" % (key, value)
 
 
+def detect_extract_layout(cfg):
+    """Best guess for (text_dir, extensions) from the unpacked source tree.
+
+    EPUB producers put content documents anywhere: OEBPS/Text, OEBPS/html,
+    OPS/xhtml, or the package root. Pick the directory holding the most HTML
+    files instead of assuming the EPUB 2 default.
+    """
+    root = cfg.source_dir
+    if not root.is_dir():
+        return None
+    counts, exts = {}, set()
+    for p in root.rglob("*"):
+        suffix = p.suffix.lower()
+        if not p.is_file() or suffix not in (".html", ".xhtml", ".htm"):
+            continue
+        exts.add(suffix)
+        rel = p.parent.relative_to(root)
+        key = "." if str(rel) == "." else rel.as_posix()
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    text_dir = max(counts, key=lambda d: counts[d])
+    return text_dir, sorted(exts)
+
+
+def set_extract_layout(path, text_dir, extensions):
+    """Rewrite text_dir and extensions inside the [extract] section."""
+    path = Path(path)
+    ext_value = "[" + ", ".join('"%s"' % toml_escape(e)
+                                for e in extensions) + "]"
+    out, in_extract = [], False
+    for line in path.read_text(encoding="utf-8").splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_extract = stripped == "[extract]"
+        elif in_extract:
+            key = stripped.split("=", 1)[0].strip()
+            if key == "text_dir":
+                line = 'text_dir = "%s"\n' % toml_escape(text_dir)
+            elif key == "extensions":
+                line = "extensions = %s\n" % ext_value
+        out.append(line)
+    path.write_text("".join(out), encoding="utf-8")
+
+
 def set_profile(path, profile):
     """Rewrite the chunk preset inside the [extract] section of book.toml."""
     path = Path(path)
