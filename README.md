@@ -89,6 +89,44 @@ confirmation before starting.
 
 Write `Chunk profile: small` (or `分块配置：small`) when invoking the skill.
 
+### Paths
+
+**Best practice: put both the source EPUB and the output EPUB in the directory
+where you started opencode (the session directory), and give only file names.**
+
+```text
+@epub-zh-translate
+
+Source: mybook.epub
+Chinese title: 中文书名
+Original title: Original Title
+Author: Author
+Output: mybook-zh.epub
+Chunk profile: small
+```
+
+The project directory becomes `mybook-zh-project/` next to the output file.
+
+Relative paths are resolved against the **session directory**, never against
+the directory a command happens to run in:
+
+| Source | Output | Result |
+| --- | --- | --- |
+| file name | file name | both in the session directory |
+| absolute | file name | output and project live in the session directory |
+| file name | absolute | source is looked up in the session directory; project follows the output |
+| absolute | absolute | both used as given |
+
+Additional rules:
+
+- If a bare file name is not in the session directory, the tool also checks the
+  output directory (the parent of the project directory).
+- If it still cannot find the file, it lists the directories it searched and the
+  EPUBs it found; it never guesses another directory.
+- `book.toml` stores relative paths, so your home directory is not written into
+  the project.
+- There is no need to `cd` into the project directory before running commands.
+
 You do not need to run any command-line tool. The agent runs `init`, `extract`,
 `guide`, `check`, `build`, and `verify` internally.
 
@@ -166,6 +204,10 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
   column of `terms.tsv`. Keep the second column to a single canonical rendering.
 - **Changing the chunk profile mid-project**: not supported. It renumbers chunks
   and invalidates existing translations.
+- **`init` reports `source not found`**: put the source EPUB next to the output
+  file, or pass the correct relative/absolute path in the prompt. The error lists
+  the directories it searched and the EPUBs it found; fix the path instead of
+  trying other directories.
 - **Strict EPUB validation**: `verify` is not a replacement for `epubcheck`.
   Install `epubcheck` separately if you need full conformance checks.
 

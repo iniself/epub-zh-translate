@@ -22,6 +22,38 @@ description: 使用本地 epubzh 流水线把整本 EPUB 翻译成简体中文�
 项目目录下；最终 EPUB 仍在用户指定的输出路径。不要把 `book.toml` 生成在
 OpenCode 的启动目录里。
 
+### 路径怎么填
+
+以用户启动 opencode 的目录为**会话目录**，它是所有相对路径的唯一基准。
+**不要用命令的当前目录**：agent 一旦 `cd`，相对路径的含义就变了。
+
+- 最佳实践：源文件和输出文件都放在会话目录，prompt 里只写文件名。
+- 绝对路径原样使用；相对路径一律相对会话目录，与命令在哪执行无关。
+- 调用 `init` 时把会话目录传给 `--base`，相对参数（`--config`、`--source`、
+  `--output`）由工具用它拼接。`--work`、`--source-dir` 相对项目目录。
+- 三种混合写法都必须支持：
+
+| 源文件 | 输出 | 结果 |
+| --- | --- | --- |
+| 绝对路径 | 文件名 | 源用绝对路径；输出和项目目录在会话目录下 |
+| 文件名 | 绝对路径 | 源在会话目录找；输出和项目目录在绝对路径所在目录下 |
+| 绝对路径 | 绝对路径 | 都原样使用 |
+
+`--source` 只给文件名、又不在会话目录时，工具会自动去输出目录（项目目录的上一级）
+找；仍找不到就报错并列出搜过的目录，**不要换目录猜**。
+
+`init` 会打印每个参数的解析结果，必须核对：
+
+```text
+base    = /path/to/session
+config  = mybook-zh-project/book.toml -> /path/to/session/mybook-zh-project/book.toml
+source  = mybook.epub                 -> /path/to/session/mybook.epub
+output  = mybook-zh.epub              -> /path/to/session/mybook-zh.epub
+```
+
+如果 `config` 解析到了会话目录、而不是 `*-project/`，立刻停下重来，不要继续
+`extract`——否则 `work/`、`src/` 会建在错误的位置。
+
 例如：
 
 ```text
@@ -174,23 +206,30 @@ TOOL="<skill-base>/epubzh-run"
 工具就在 `SKILL.md` 所在目录。不要假设书籍项目根目录（`book.toml`
 所在目录）里有 `./epubzh-run`。
 
-所有命令都在书籍项目根目录（`book.toml` 所在目录）执行，并显式传入项目配置。
-项目目录按输出文件推导；用户显式给了项目目录时，以用户给的为准：
+不要 `cd` 到项目目录，也不要在命令里使用依赖当前目录的相对配置。所有命令都用
+绝对 `--config`，并在 `init` 时用 `--base` 明确会话目录。项目目录按输出文件
+推导；用户显式给了项目目录时，以用户给的为准：
 
 ```bash
 TOOL="<skill-base>/epubzh-run"
-SOURCE="/path/to/book.epub"
-OUTPUT="/path/to/books/mybook-zh.epub"
+SESSION="/path/to/books"      # 用户启动 opencode 的目录
+SOURCE="mybook.epub"          # 在会话目录时只写文件名
+OUTPUT="mybook-zh.epub"       # 在会话目录时只写文件名
 TITLE="中文书名"
 SOURCE_TITLE="Original Title"
 AUTHOR="Author"
 
-PROJECT="$(dirname "$OUTPUT")/$(basename "$OUTPUT" .epub)-project"
-mkdir -p "$PROJECT"
-cd "$PROJECT"
+# 输出是绝对路径时项目目录跟着它；否则按会话目录推导
+case "$OUTPUT" in
+  /*) OUTPUT_ABS="$OUTPUT" ;;
+  *)  OUTPUT_ABS="$SESSION/$OUTPUT" ;;
+esac
+PROJECT="$(dirname "$OUTPUT_ABS")/$(basename "$OUTPUT_ABS" .epub)-project"
+CONFIG="$PROJECT/book.toml"
 
 "$TOOL" init \
-  --config "$PROJECT/book.toml" \
+  --base "$SESSION" \
+  --config "$CONFIG" \
   --source "$SOURCE" \
   --title "$TITLE" \
   --source-title "$SOURCE_TITLE" \
@@ -198,15 +237,15 @@ cd "$PROJECT"
   --output "$OUTPUT" \
   --profile large
 
-"$TOOL" extract --config book.toml
-"$TOOL" guide --config book.toml
-"$TOOL" status --config book.toml
-"$TOOL" prompt <stem> --chunk <n> --config book.toml
-"$TOOL" check <stem> --chunk <n> --config book.toml
-"$TOOL" check --config book.toml
-"$TOOL" terms-audit --config book.toml
-"$TOOL" build --config book.toml
-"$TOOL" verify --config book.toml
+"$TOOL" extract --config "$CONFIG"
+"$TOOL" guide --config "$CONFIG"
+"$TOOL" status --config "$CONFIG"
+"$TOOL" prompt <stem> --chunk <n> --config "$CONFIG"
+"$TOOL" check <stem> --chunk <n> --config "$CONFIG"
+"$TOOL" check --config "$CONFIG"
+"$TOOL" terms-audit --config "$CONFIG"
+"$TOOL" build --config "$CONFIG"
+"$TOOL" verify --config "$CONFIG"
 ```
 
 固定流程：
@@ -215,6 +254,12 @@ cd "$PROJECT"
 
 规则：
 
+- 不要 `cd`，`--config` 永远传绝对路径。`init` 必须给 `--base`（所有路径都是绝对
+  路径时可以省略），相对路径一律相对会话目录，不相对当前目录。
+- `init` 打印的 `config` / `source` / `output` 解析结果必须核对；`config` 落在会话
+  目录而不是 `*-project/` 时立刻停下重来。
+- `--source` 找不到时，工具会列出搜过的目录和候选 `.epub`；按提示把书放到输出目录
+  或修正路径，不要换目录反复试。
 - 新项目先 `init` + `extract`；已有 `book.toml` 时先 `status` + `check`，
   不要覆盖已有译文。
 - `--profile` 只在 `init` 时决定（`large`/`small`）。已有译文后用 `extract --profile`
