@@ -470,12 +470,18 @@ def segment_words(text):
     return len(PH_RE.sub(" ", text).split())
 
 
-def chunk_segments(segments, words_per_chunk):
-    """Split segments into translation chunks of roughly equal size."""
+def chunk_segments(segments, words_per_chunk, max_segments=0):
+    """Split segments into translation chunks of roughly equal size.
+
+    A non-zero ``max_segments`` also caps the number of segments per chunk,
+    which keeps a single chunk small enough for models with a limited output
+    window even when its word count is low.
+    """
     chunks, cur, cur_words = [], [], 0
     for s in segments:
         w = segment_words(s.text)
-        if cur and cur_words + w > words_per_chunk:
+        if cur and (cur_words + w > words_per_chunk or
+                    (max_segments > 0 and len(cur) >= max_segments)):
             chunks.append(cur)
             cur, cur_words = [], 0
         cur.append(s)

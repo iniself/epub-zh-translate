@@ -8,6 +8,24 @@ import tomllib
 DEFAULT_CSS = Path(__file__).parent / "defaults" / "zh-overrides.css"
 DEFAULT_GUIDE_TEMPLATE = Path(__file__).parent / "defaults" / "guide-template.md"
 DEFAULT_TERMS = Path(__file__).parent / "defaults" / "terms.tsv"
+DEFAULT_RULECARD = Path(__file__).parent / "defaults" / "rulecard.md"
+
+# Chunk size presets. "large" is the historical behaviour and stays the
+# default so existing projects keep their chunk numbering.
+PROFILES = {
+    "large": {"words_per_chunk": 2600, "max_segments_per_chunk": 0},
+    "small": {"words_per_chunk": 1200, "max_segments_per_chunk": 40},
+}
+DEFAULT_PROFILE = "large"
+
+
+def check_profile(value):
+    """Return a canonical profile name or raise SystemExit."""
+    name = (value or DEFAULT_PROFILE).strip().lower()
+    if name not in PROFILES:
+        raise SystemExit("unknown profile %r: choose one of %s"
+                         % (value, ", ".join(sorted(PROFILES))))
+    return name
 
 
 def _p(base, value):
@@ -41,7 +59,9 @@ class Config:
     extensions: list = field(default_factory=lambda: [".html"])
     skip: set = field(default_factory=set)
     protect_blocks: list = field(default_factory=list)
-    words_per_chunk: int = 2600
+    profile: str = DEFAULT_PROFILE
+    words_per_chunk: int = PROFILES[DEFAULT_PROFILE]["words_per_chunk"]
+    max_segments_per_chunk: int = PROFILES[DEFAULT_PROFILE]["max_segments_per_chunk"]
     require_latin: bool = True
     spacing: bool = True
     protect_tags: list = field(default_factory=list)
@@ -83,6 +103,22 @@ class Config:
     @property
     def guide_file(self):
         return self.work_dir / "TRANSLATION_GUIDE.md"
+
+    @property
+    def prompts_dir(self):
+        return self.work_dir / "prompts"
+
+    @property
+    def style_file(self):
+        return self.work_dir / "style.md"
+
+    @property
+    def decisions_file(self):
+        return self.work_dir / "decisions.md"
+
+    @property
+    def introduced_tsv(self):
+        return self.work_dir / "introduced.tsv"
 
     @property
     def oebps(self):
@@ -130,6 +166,8 @@ def load(config_path="book.toml"):
     extract = raw.get("extract", {})
     typography = raw.get("typography", {})
     toc = raw.get("toc", {})
+    profile = check_profile(extract.get("profile"))
+    preset = PROFILES[profile]
     css_value = typography.get("css", "default")
     if css_value in (None, "", "none", "false"):
         css = None
@@ -162,7 +200,11 @@ def load(config_path="book.toml"):
                     for e in _as_list(extract.get("extensions"), [".html"])],
         skip=set(_as_list(extract.get("skip"), [])),
         protect_blocks=_as_list(extract.get("protect_blocks"), []),
-        words_per_chunk=int(extract.get("words_per_chunk", 2600)),
+        profile=profile,
+        words_per_chunk=int(extract.get("words_per_chunk",
+                                        preset["words_per_chunk"])),
+        max_segments_per_chunk=int(extract.get("max_segments_per_chunk",
+                                               preset["max_segments_per_chunk"])),
         require_latin=bool(extract.get("require_latin", True)),
         spacing=bool(typography.get("spacing", True)),
         protect_tags=list(protect),
@@ -180,10 +222,12 @@ def toml_escape(value):
 
 
 def write_default(path, source, title, author="", work="work", output="",
-                  source_dir="src", source_title=""):
+                  source_dir="src", source_title="", profile=DEFAULT_PROFILE):
     path = Path(path)
     if path.exists():
         raise SystemExit("refusing to overwrite existing config: %s" % path)
+    profile = check_profile(profile)
+    preset = PROFILES[profile]
     if not output:
         safe = (title or "translated").replace("/", "-")
         output = "out/%s.epub" % safe
@@ -206,7 +250,12 @@ skip = []
 # Elements kept byte-identical during extraction, as "tag" or "tag.class".
 # Use this for code blocks a publisher styles without <pre>.
 protect_blocks = []
-words_per_chunk = 2600
+# Chunk preset: "large" (2600 words, no segment cap) or "small"
+# (1200 words, at most 40 segments). Decide it before `extract`; changing it
+# later renumbers chunks and invalidates existing translations.
+profile = "%s"
+words_per_chunk = %d
+max_segments_per_chunk = %d
 require_latin = true
 
 [typography]
@@ -225,7 +274,58 @@ contents_file = "contents.html"
 """ % (
         toml_escape(source), toml_escape(source_dir), toml_escape(work),
         toml_escape(output), toml_escape(title), toml_escape(source_title or title),
-        toml_escape(author),
+        toml_escape(author), profile, preset["words_per_chunk"],
+        preset["max_segments_per_chunk"],
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+KEYS = ("profile", "words_per_chunk", "max_segments_per_chunk")
+
+
+def _profile_line(key, profile, preset):
+    value = {"profile": '"%s"' % profile,
+             "words_per_chunk": str(preset["words_per_chunk"]),
+             "max_segments_per_chunk": str(preset["max_segments_per_chunk"])}[key]
+    return "%s = %s\n" % (key, value)
+
+
+def set_profile(path, profile):
+    """Rewrite the chunk preset inside the [extract] section of book.toml."""
+    path = Path(path)
+    profile = check_profile(profile)
+    preset = PROFILES[profile]
+    out, seen = [], set()
+    in_extract = extract_seen = False
+    insert_at = None
+    for line in path.read_text(encoding="utf-8").splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_extract and insert_at is None:
+                insert_at = len(out)
+            in_extract = stripped == "[extract]"
+            if in_extract:
+                extract_seen = True
+        if in_extract:
+            key = stripped.split("=", 1)[0].strip()
+            if key in KEYS:
+                seen.add(key)
+                indent = line[:len(line) - len(line.lstrip())]
+                out.append(indent + _profile_line(key, profile, preset))
+                continue
+        out.append(line)
+    if in_extract and insert_at is None:
+        insert_at = len(out)
+    missing = [k for k in KEYS if k not in seen]
+    if not extract_seen:
+        out.append("\n[extract]\n")
+        for key in KEYS:
+            out.append(_profile_line(key, profile, preset))
+    elif missing:
+        block = [_profile_line(k, profile, preset) for k in missing]
+        if insert_at < len(out) and out[insert_at].lstrip().startswith("["):
+            block.append("\n")
+        out[insert_at:insert_at] = block
+    path.write_text("".join(out), encoding="utf-8")
+    return profile

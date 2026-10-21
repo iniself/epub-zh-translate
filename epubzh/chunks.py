@@ -94,30 +94,88 @@ def read_index(cfg):
     return json.loads(cfg.index_file.read_text(encoding="utf-8"))
 
 
+def chunk_counts(cfg, name, info=None):
+    """Per-chunk segment counts, from the index or recomputed from source."""
+    if info is None:
+        info = read_index(cfg)[name]
+    counts = info.get("chunk_segments")
+    if counts and len(counts) == info["chunks"]:
+        return list(counts)
+    src = cfg.source_dir / cfg.text_dir / name
+    work, _ = markup.atomize(src.read_text(encoding="utf-8"), cfg.protect_blocks)
+    segs = markup.extract_segments(work, require_latin=cfg.require_latin)
+    cl = markup.chunk_segments(segs, cfg.words_per_chunk,
+                               cfg.max_segments_per_chunk)
+    return [len(c) for c in cl]
+
+
+def chunk_state(path, nseg):
+    """Classify one translation file: pending / partial / broken / done.
+
+    ``partial`` means segments 1..k are present and correctly numbered, but
+    the chunk continues; a translator can append the rest instead of
+    retranslating.
+    """
+    path = Path(path)
+    if not path.exists():
+        return "pending", 0
+    nums = [p[0] for p in load_marked(path)]
+    if nums == list(range(1, nseg + 1)):
+        return "done", nseg
+    if nums and nums == list(range(1, len(nums) + 1)) and len(nums) < nseg:
+        return "partial", len(nums)
+    return "broken", len(nums)
+
+
 def status(cfg):
     index = read_index(cfg)
     rows = []
+    cap = ("max %d segments" % cfg.max_segments_per_chunk
+           if cfg.max_segments_per_chunk else "no segment cap")
+    print("profile: %s (%d words per chunk, %s)"
+          % (cfg.profile, cfg.words_per_chunk, cap))
     for name in sorted(index):
         info = index[name]
+        counts = chunk_counts(cfg, name, info)
         stem = Path(name).stem
-        done = 0
-        for ci in range(1, info["chunks"] + 1):
-            path = cfg.zh_dir / chunk_name(stem, ci)
-            if path.exists():
+        done = partial = broken = 0
+        for ci, nseg in enumerate(counts, 1):
+            state, _ = chunk_state(cfg.zh_dir / chunk_name(stem, ci), nseg)
+            if state == "done":
                 done += 1
-        rows.append((name, done, info["chunks"], info["segments"], info["words"]))
+            elif state == "partial":
+                partial += 1
+            elif state == "broken":
+                broken += 1
+        rows.append((name, done, len(counts), info["segments"], info["words"],
+                     partial, broken))
     total_done = sum(r[1] for r in rows)
     total_chunks = sum(r[2] for r in rows)
+    total_partial = sum(r[5] for r in rows)
+    total_broken = sum(r[6] for r in rows)
     print("%-38s %7s %8s %10s" % ("file", "chunks", "segments", "words"))
-    for name, done, chunks, segs, words in rows:
-        mark = "done" if done == chunks else "%d/%d" % (done, chunks)
+    for name, done, nchunks, segs, words, partial, broken in rows:
+        mark = "done" if done == nchunks else "%d/%d" % (done, nchunks)
+        flags = []
+        if partial:
+            flags.append("%dp" % partial)
+        if broken:
+            flags.append("%db" % broken)
+        if flags:
+            mark += " " + " ".join(flags)
         print("%-38s %7s %8d %10d" % (name, mark, segs, words))
     print("\nchunks: %d/%d translated" % (total_done, total_chunks))
+    if total_partial or total_broken:
+        print("needs attention: %d partial, %d broken" % (total_partial, total_broken))
     return total_done, total_chunks
 
 
-def check_file(cfg, name):
-    """Check every translated chunk of one source file. Returns problems."""
+def check_file(cfg, name, only_chunk=None):
+    """Check translated chunks of one source file. Returns problems.
+
+    ``only_chunk`` restricts validation to a single chunk, so a translator
+    working on one chunk does not see "file missing" for its siblings.
+    """
     index = read_index(cfg)
     if name not in index:
         return ["%s: not in index" % name]
@@ -130,12 +188,19 @@ def check_file(cfg, name):
     work, atoms = markup.atomize(src_path.read_text(encoding="utf-8"),
                                  cfg.protect_blocks)
     segs = markup.extract_segments(work, require_latin=cfg.require_latin)
-    chunks = markup.chunk_segments(segs, cfg.words_per_chunk)
+    chunks = markup.chunk_segments(segs, cfg.words_per_chunk,
+                                   cfg.max_segments_per_chunk)
     problems = []
     if len(chunks) != info["chunks"]:
         problems.append("%s: chunk count changed (%d vs %d), re-run extract"
                         % (name, len(chunks), info["chunks"]))
-    for ci, chunk in enumerate(chunks, 1):
+    if only_chunk is not None:
+        if only_chunk < 1 or only_chunk > len(chunks):
+            return problems + ["%s: chunk must be 1..%d" % (name, len(chunks))]
+        targets = [(only_chunk, chunks[only_chunk - 1])]
+    else:
+        targets = list(enumerate(chunks, 1))
+    for ci, chunk in targets:
         path = cfg.zh_dir / chunk_name(stem, ci)
         translated, verbatim, err = parse_translation(path, len(chunk))
         if err:

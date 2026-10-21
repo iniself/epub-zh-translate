@@ -74,7 +74,8 @@ def _merge_file(cfg, name):
     source = src_path.read_text(encoding="utf-8")
     work, atoms = markup.atomize(source, cfg.protect_blocks)
     segs = markup.extract_segments(work, require_latin=cfg.require_latin)
-    chunk_list = markup.chunk_segments(segs, cfg.words_per_chunk)
+    chunk_list = markup.chunk_segments(segs, cfg.words_per_chunk,
+                                       cfg.max_segments_per_chunk)
     translations = []
     verbatim_flags = []
     stem = Path(name).stem
