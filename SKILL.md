@@ -9,14 +9,16 @@ description: 使用本地 epubzh 流水线把整本 EPUB 翻译成简体中文�
 
 开始前先向用户确认以下信息。缺少必填项时直接询问，不要猜路径，也不要沿用上一个项目的书名或输出路径：
 
-- 源文件（必填）：用于定位和解包书籍的 `.epub` 路径
+- 源文件（必填）：文件名即可，例如 `mybook.epub`；也可以给相对或绝对路径
 - 中文书名（必填）：《……》
 - 原书名（建议填）：只用于翻译规范，不参与找文件
 - 作者：……
-- 输出文件（必填）：最终 EPUB 的完整路径
+- 输出文件（必填）：文件名即可，例如 `mybook-zh.epub`；也可以给相对或绝对路径
 - 项目目录（可选）：不填时按输出文件推导为
   `<输出文件所在目录>/<输出文件名去掉 .epub>-project`
 - 分块配置（可选）：`large`（默认）或 `small`
+
+用户只需要给文件名。**不要要求用户提供绝对路径**，也不要因为用户只写了文件名就反问。
 
 项目目录就是 `book.toml` 所在目录。`book.toml`、`work/`、`src/` 都放在
 项目目录下；最终 EPUB 仍在用户指定的输出路径。不要把 `book.toml` 生成在
@@ -74,18 +76,22 @@ work：/path/to/books/mybook-zh-project/work
 `large`。把它映射成 `init --profile <值>`，非法值必须停下来问，不要回落到默认值。
 `init` 之后读回 `book.toml` 的 `[extract] profile` 并复述，防止说 small 实际跑 large。
 
-用户调用模板：
+用户调用模板（用户只写文件名，不需要绝对路径）：
 
 ```text
 @epub-zh-translate
 
-源文件：/path/to/book.epub
+源文件：mybook.epub
 中文书名：中文书名
 原书名：Original Title
 作者：Author
-输出：/path/to/book-zh.epub
+输出：mybook-zh.epub
 分块配置：small
 ```
+
+收到这段 prompt 后，agent 自己完成：会话目录取 OpenCode 的启动目录；源文件、输出都按
+会话目录解析；项目目录取 `会话目录/mybook-zh-project`；再按“路径怎么填”一节的规则
+拼出 `init --base ...` 的绝对参数。**不要把这些路径问题转嫁给用户。**
 
 开始执行前，先复述收集到的参数（含实际生效的分块配置）和将要运行的命令，得到用户确认后再动手。
 
