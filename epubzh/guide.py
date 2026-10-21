@@ -96,11 +96,19 @@ def _read_introduced(path):
             if line.strip()]
 
 
-def introduced(cfg, refresh=False):
-    """English terms already rendered as「中文（English）」in earlier chunks."""
+def introduced(cfg, refresh=False, exclude=None):
+    """English terms already rendered as「中文（English）」in earlier chunks.
+
+    ``exclude`` is the chunk currently being translated. Its own older copy
+    must not count as "earlier context", otherwise retranslating a chunk tells
+    the model that terms it should introduce are already introduced.
+    """
     path = cfg.introduced_tsv
     zh_files = sorted(cfg.zh_dir.glob("*.txt")) if cfg.zh_dir.exists() else []
-    if path.exists() and not refresh and zh_files:
+    if exclude is not None:
+        ex = Path(exclude).resolve()
+        zh_files = [p for p in zh_files if p.resolve() != ex]
+    if exclude is None and path.exists() and not refresh and zh_files:
         newest = max(p.stat().st_mtime for p in zh_files)
         if path.stat().st_mtime >= newest:
             return _read_introduced(path)
@@ -113,22 +121,26 @@ def introduced(cfg, refresh=False):
             if len(en) >= 2 and re.search(r"[A-Za-z]{2}", en):
                 found.setdefault(en.lower(), en)
     values = sorted(found.values(), key=str.lower)
-    path.write_text("".join(v + "\n" for v in values), encoding="utf-8")
+    # The cache is only valid for a full scan; a chunk-scoped scan would lose
+    # the excluded chunk's terms and poison later prompts.
+    if exclude is None:
+        path.write_text("".join(v + "\n" for v in values), encoding="utf-8")
     return values
 
 
 CJK_RE = re.compile("[\u4e00-\u9fff]")
 
 
-def introduced_for_chunk(cfg, chunk_text):
+def introduced_for_chunk(cfg, chunk_text, exclude=None):
     """Already-introduced terms that actually occur in this chunk.
 
     Restricting the list to the current chunk keeps the prompt short and
-    actionable instead of dumping every annotation in the book.
+    actionable instead of dumping every annotation in the book. ``exclude``
+    keeps a retranslated chunk from seeing its own old copy.
     """
     plain = markup.strip_placeholders(chunk_text)
     out = []
-    for en in introduced(cfg):
+    for en in introduced(cfg, exclude=exclude):
         if len(en) < 2 or not re.search(r"[A-Za-z]{2}", en):
             continue
         if _term_pattern(en).search(plain):
@@ -192,11 +204,14 @@ def _contract(cfg, stem, chunk, dst):
    newString：oldString 加换行，再加 `@@@SEG 031@@@` 和第 31 段译文
 
    `edit` 连续 2 次无法应用（报告 identical、找不到 oldString 或多处匹配）时，
-   停止修补，直接 `write` 覆盖整个分块。
+   停止修补，直接 `write` 覆盖整个分块。每次追加后立刻重跑第 3 步的自检，
+   确认段号从 1 连续排到最后一段，再继续追加。
 3. 写完先运行一次自检：
    `%s check --config %s %s --chunk %d`
 4. 自检只报其他分块的 `file missing` 时忽略并结束。报错会附带 `src:` 和 `got:`
-   两行，照着改对应的那一段即可，不要通读整块。改完再跑一次。
+   两行，照着改对应的那一段即可，不要通读整块。报 `segment markers` 时会点名
+   重复或缺失的段号：删掉多余的 `@@@SEG nnn@@@`，或补齐缺的那一段，不要重写
+   整块。改完再跑一次。
 5. 同一分块连续 3 次自检不过就停下来报告问题，不要继续重试。
 6. 完成后只回复一行：`已写入 %s`
 """ % (_module_cmd(cfg), cfg.path, stem, chunk, dst)
@@ -255,7 +270,7 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             parts.append("本块未命中术语表；遇到术语先查 `%s`。" % cfg.terms_tsv)
         parts.append("")
 
-    seen = introduced_for_chunk(cfg, chunk_text)
+    seen = introduced_for_chunk(cfg, chunk_text, exclude=dst)
     if seen:
         shown = "、".join(seen[:MAX_INTRODUCED])
         if len(seen) > MAX_INTRODUCED:

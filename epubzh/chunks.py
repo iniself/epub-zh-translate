@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 from . import markup, spacing
@@ -74,6 +75,29 @@ def load_marked(path):
             for n, body, keep in parts]
 
 
+def _marker_problems(parts, nseg):
+    """Point at duplicated, missing, and out-of-range segment markers."""
+    counts = Counter(p[0] for p in parts)
+    dup = sorted(n for n, c in counts.items() if c > 1)
+    missing = [n for n in range(1, nseg + 1) if n not in counts]
+    extra = sorted(n for n in counts if n < 1 or n > nseg)
+    bits = []
+    if dup:
+        bits.append("duplicated: %s" % ", ".join(str(n) for n in dup))
+    if missing:
+        bits.append("missing: %s" % ", ".join(str(n) for n in missing))
+    if extra:
+        bits.append("out of range: %s" % ", ".join(str(n) for n in extra))
+    detail = "; ".join(bits) or "order is wrong"
+    if dup:
+        # Show the duplicated body so the extra marker is easy to find.
+        first = next(p for p in parts if p[0] == dup[0])
+        body = " ".join(first[1].split())[:60]
+        if body:
+            detail += " | seg %d: %s" % (dup[0], body)
+    return "segment markers != 1..%d (%s)" % (nseg, detail)
+
+
 def parse_translation(path, nseg):
     """Parse a translated chunk file into (texts, verbatim flags, error)."""
     path = Path(path)
@@ -82,9 +106,8 @@ def parse_translation(path, nseg):
     parts = load_marked(path)
     if not parts:
         return None, None, "no markers found"
-    nums = [p[0] for p in parts]
-    if nums != list(range(1, nseg + 1)):
-        return None, None, "segment numbers %s != 1..%d" % (nums[:8], nseg)
+    if [p[0] for p in parts] != list(range(1, nseg + 1)):
+        return None, None, _marker_problems(parts, nseg)
     return [p[1] for p in parts], [p[2] for p in parts], None
 
 
