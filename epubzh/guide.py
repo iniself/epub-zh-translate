@@ -185,10 +185,18 @@ def _contract(cfg, stem, chunk, dst):
 1. 你的第一条动作必须是写输出文件；不要复述任务、不要解释思路、不要输出
    「我将翻译」「Actually, I'll ...」这类句子。
 2. 一次写完整个分块。如果预计输出会超长，先 `write` 前 20–30 段，再用
-   `edit` 追加剩余部分；禁止从头重写。
+   `edit` 追加；禁止从头重写。追加时 oldString 必须是文件里唯一的一段（通常
+   是最后一段），且必须与 newString 不同：
+
+   oldString：`@@@SEG 030@@@` 加第 30 段译文
+   newString：oldString 加换行，再加 `@@@SEG 031@@@` 和第 31 段译文
+
+   `edit` 连续 2 次无法应用（报告 identical、找不到 oldString 或多处匹配）时，
+   停止修补，直接 `write` 覆盖整个分块。
 3. 写完先运行一次自检：
    `%s check --config %s %s --chunk %d`
-4. 自检只报其他分块的 `file missing` 时忽略并结束；否则只改本块，改完再跑一次。
+4. 自检只报其他分块的 `file missing` 时忽略并结束。报错会附带 `src:` 和 `got:`
+   两行，照着改对应的那一段即可，不要通读整块。改完再跑一次。
 5. 同一分块连续 3 次自检不过就停下来报告问题，不要继续重试。
 6. 完成后只回复一行：`已写入 %s`
 """ % (_module_cmd(cfg), cfg.path, stem, chunk, dst)
