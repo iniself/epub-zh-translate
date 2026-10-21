@@ -298,9 +298,15 @@ class Segment(object):
             if it["kind"] == "pair":
                 want.append(it["close"])
         if sorted(got) != sorted(want):
-            missing = [w for w in want if w not in got]
-            extra = [g for g in got if g not in want]
-            return "placeholder mismatch: missing=%s extra=%s" % (missing, extra)
+            # Multiset diff: duplicated or misplaced markers matter too.
+            remaining = list(got)
+            missing = []
+            for w in want:
+                if w in remaining:
+                    remaining.remove(w)
+                else:
+                    missing.append(w)
+            return "placeholder mismatch: missing=%s extra=%s" % (missing, remaining)
         if has_stray_brackets(translated):
             return "stray placeholder bracket"
         for it in self.items:

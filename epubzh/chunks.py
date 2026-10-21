@@ -170,6 +170,17 @@ def status(cfg):
     return total_done, total_chunks
 
 
+def _clip(text, limit=110):
+    """Single-line excerpt used in error messages."""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def _context(seg, translated):
+    """Source and target excerpt so a translator can fix the line directly."""
+    return "\n    src: %s\n    got: %s" % (_clip(seg.text), _clip(translated))
+
+
 def check_file(cfg, name, only_chunk=None):
     """Check translated chunks of one source file. Returns problems.
 
@@ -209,8 +220,9 @@ def check_file(cfg, name, only_chunk=None):
         for seg, text, keep in zip(chunk, translated, verbatim):
             bad = seg.check(text)
             if bad:
-                problems.append("%s chunk %d seg %d: %s"
-                                % (name, ci, seg.index + 1, bad))
+                problems.append("%s chunk %d seg %d: %s%s"
+                                % (name, ci, seg.index + 1, bad,
+                                   _context(seg, text)))
                 continue
             if keep:
                 continue
@@ -218,10 +230,13 @@ def check_file(cfg, name, only_chunk=None):
             short = len(body) <= 3 and " " not in body
             if cfg.require_latin and re.search("[A-Za-z]", seg.text) \
                     and not CJK_RE.search(body) and not short:
-                problems.append("%s chunk %d seg %d: not translated -> %s"
-                                % (name, ci, seg.index + 1, text[:100]))
+                problems.append("%s chunk %d seg %d: not translated%s"
+                                % (name, ci, seg.index + 1,
+                                   _context(seg, text)))
             missing = spacing.has_missing_space(text)
             if missing:
-                problems.append("%s chunk %d seg %d: missing space around Latin, e.g. %s"
-                                % (name, ci, seg.index + 1, missing[:3]))
+                problems.append("%s chunk %d seg %d: missing space around Latin, "
+                                "e.g. %s%s"
+                                % (name, ci, seg.index + 1, missing[:3],
+                                   _context(seg, text)))
     return problems
