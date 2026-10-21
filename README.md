@@ -68,12 +68,26 @@ Original title: Original English Title
 Author: Author Name
 Output: /path/to/books/mybook-zh.epub
 Project directory (optional): /path/to/books/mybook-zh-project
+Chunk profile (optional): small
 ```
 
 `Source`, `Chinese title`, and `Output` are required. `Original title` and
 `Author` are recommended. `Project directory` is optional; if omitted, it is
-derived from the output path. The agent will repeat the parameters and wait for
+derived from the output path. `Chunk profile` is optional and defaults to
+`large`; see below. The agent will repeat the parameters and wait for
 confirmation before starting.
+
+### Chunk profiles
+
+`large` and `small` decide how much text one chunk holds. Choose before
+`extract`; switching later renumbers chunks and invalidates translations.
+
+| Profile | Per chunk | Use it for |
+| --- | --- | --- |
+| `large` (default) | about 2600 words, no segment cap | models with an 8k+ output window |
+| `small` | about 1200 words, at most 40 segments | smaller context/output windows, or books that stalled before |
+
+Write `Chunk profile: small` (or `分块配置：small`) when invoking the skill.
 
 You do not need to run any command-line tool. The agent runs `init`, `extract`,
 `guide`, `check`, `build`, and `verify` internally.
@@ -99,9 +113,12 @@ starting a new project.
 1. Creates the project configuration, unpacks the source EPUB, and seeds a glossary.
 2. Reads the table of contents, preface, and first chapters to refine the glossary.
 3. Generates `work/TRANSLATION_GUIDE.md`.
-4. Translates the text in parallel chunks.
-5. Checks each chapter, then builds and verifies the final EPUB.
-6. Reports the output path, progress, check/verify results, and any remaining issues.
+4. Generates one prompt per chunk under `work/prompts/` and hands each chunk to a
+   subagent, one chunk per subagent.
+5. Checks each chunk and chapter, audits terminology, then builds and verifies the
+   final EPUB.
+6. Reports the output path, chunk profile, progress, check/audit/verify results, and
+   any remaining issues.
 
 ## Output
 
@@ -140,7 +157,15 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
 - **The tool cannot be found**: check that Python 3.11+ is available, that
   `epubzh-run` is executable, and that the skill directory was not moved.
 - **`check` reports problems**: fix the reported chunk under `work/zh/`; do not
-  edit `work/build`.
+  edit `work/build`. For a subagent, use `check <stem> --chunk <n>` so it only
+  sees its own chunk.
+- **The model keeps saying "I'll translate it" without writing**: the chunk is
+  probably too large, or the generated prompt was not used. Switch to `small`,
+  run `prompt` and hand `work/prompts/<stem>.<nn>.md` to one subagent per chunk.
+- **Terminology drifts**: run `terms-audit`; put acceptable variants in the third
+  column of `terms.tsv`. Keep the second column to a single canonical rendering.
+- **Changing the chunk profile mid-project**: not supported. It renumbers chunks
+  and invalidates existing translations.
 - **Strict EPUB validation**: `verify` is not a replacement for `epubcheck`.
   Install `epubcheck` separately if you need full conformance checks.
 

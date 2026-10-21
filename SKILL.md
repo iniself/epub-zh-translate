@@ -16,6 +16,7 @@ description: 使用本地 epubzh 流水线把整本 EPUB 翻译成简体中文�
 - 输出文件（必填）：最终 EPUB 的完整路径
 - 项目目录（可选）：不填时按输出文件推导为
   `<输出文件所在目录>/<输出文件名去掉 .epub>-project`
+- 分块配置（可选）：`large`（默认）或 `small`
 
 项目目录就是 `book.toml` 所在目录。`book.toml`、`work/`、`src/` 都放在
 项目目录下；最终 EPUB 仍在用户指定的输出路径。不要把 `book.toml` 生成在
@@ -32,7 +33,29 @@ work：/path/to/books/mybook-zh-project/work
 
 如果用户已经给出这些信息，直接使用，不要重复询问。
 
-开始执行前，先复述收集到的参数和将要运行的命令，得到用户确认后再动手。
+分块配置决定每个翻译分块的大小，**必须在 `init` 之前确定**，翻译开始后不能改：
+
+- `large`（默认，等同历史行为）：约 2600 词、不限段数，适合输出上限 ≥8k 的大模型；
+- `small`：约 1200 词、最多 40 段，适合上下文或输出受限的模型，也用于之前翻译卡住过的书。
+
+用户通常在调用时写一行 `分块配置：small`；也识别 `模型：small` 这种写法。没写就是
+`large`。把它映射成 `init --profile <值>`，非法值必须停下来问，不要回落到默认值。
+`init` 之后读回 `book.toml` 的 `[extract] profile` 并复述，防止说 small 实际跑 large。
+
+用户调用模板：
+
+```text
+@epub-zh-translate
+
+源文件：/path/to/book.epub
+中文书名：中文书名
+原书名：Original Title
+作者：Author
+输出：/path/to/book-zh.epub
+分块配置：small
+```
+
+开始执行前，先复述收集到的参数（含实际生效的分块配置）和将要运行的命令，得到用户确认后再动手。
 
 原书名只用于翻译规范；用户不提供时不要编造。`init` 后检查 `book.toml` 的 `source_title`，避免它被中文书名兜底；必要时修正。
 
@@ -50,9 +73,47 @@ work：/path/to/books/mybook-zh-project/work
 1. 如果项目目录没有 `book.toml`：先 `init` + `extract`，确认所有文件 round-trip 通过后再开始翻译。
    如果已有 `book.toml`：先运行 `status` + `check`，确认是续跑还是新项目；不要覆盖已有译文。
 2. 阅读目录、前言和前两章，完善 `work/terms.tsv`，然后运行 `guide`；它会生成 `work/TRANSLATION_GUIDE.md`。
-3. 正文按分块并行翻译；每个分块写完后按翻译规范自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译、中英文空格）。
-4. 全部完成后运行 `build` 和 `verify`；XML、内部链接、锚点、占位符必须零错误。
+3. 正文按分块翻译，流程见下面的“分块翻译”；每个分块写完后用 `check --chunk` 自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译、中英文空格）。
+4. 全部完成后运行 `build` 和 `verify`；XML、内部链接、锚点、占位符必须零错误。构建前运行一次
+   `terms-audit`，检查术语一致性（默认只报告，不阻断）。
 5. 不要修改源 EPUB；不要手工改 `work/build` 里的文件，所有修改通过 `work/zh/`、`work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 完成。
+
+### 分块翻译（照做，不要自己发明流程）
+
+每个分块 = 一个 subagent = 一次 `write`。主会话只做调度和校验，**不要在主会话里直接翻译整块**。
+
+```bash
+TOOL="<skill-base>/epubzh-run"
+
+# 1. 看还剩哪些分块（partial / broken 会标出来）
+"$TOOL" status --config book.toml
+
+# 2. 生成该分块的提示词（写到 work/prompts/<stem>.<nn>.md）
+"$TOOL" prompt <stem> --chunk <n>
+
+# 3. 把提示词文件路径交给一个 subagent，让它读文件并执行
+#    一个分块一个 subagent；不要复制粘贴提示词正文
+
+# 4. 只校验这一块
+"$TOOL" check --config book.toml <stem> --chunk <n>
+```
+
+硬规则：
+
+- 分块提示词必须用 `prompt` 生成，不要自己拼；`large` 带完整规范，`small` 带规则卡 +
+  本块术语 + 上文。
+- 一个 subagent 只做一个分块，不要让它顺手翻译别的分块。
+- 子代理如果反复说“我将翻译”“Actually, I'll just translate it”却不动手，说明它没有按
+  提示词执行：重发一句“读 `<prompt 文件>`，按执行契约直接写文件，不要回复计划”，
+  不要追加解释，也不要换一种说法反复劝。
+- 同一分块连续 3 次 `check --chunk` 不过，停下来报告用户，不要继续重试。
+- `status` 里的 `Np` 是 partial：重新 `prompt` 会给出“从第 N+1 段续写”的指令，
+  只追加、不要整块重写。`Nb` 是 broken（段号不连续）：按提示词整体重写该块。
+- 同一章所有分块完成后，再跑一次整章 `check <stem>` 要求清零；此时剩下的才是真问题，
+  不会再有“别的分块缺失”。
+- 第一章定稿后写 `work/style.md`（10–15 组英中例句 + 硬决定：人称、术语首次出现格式、
+  数字与引号），它是后续所有分块的风格基准。
+- 每章清零后，把本章的新译法、句式取舍追加到 `work/decisions.md`，后续分块会自动带上。
 
 ## 四、内容处理策略
 
@@ -81,6 +142,11 @@ work：/path/to/books/mybook-zh-project/work
 - 术语：首次出现写“中文（English）”，之后统一用中文；以 `work/terms.tsv` 为准。
 - 人名/地名：音译，首次出现附原文；产品名、公司名、协议名保留英文。
 - 术语表没有的译法，先补进 `work/terms.tsv` 再继续。
+- `terms.tsv` 用三列：`English`、`规范中文`、`备注或禁用变体`（可留空）。第二列只写译名，
+  不要把“首次出现写……”这类说明写进去；说明放第三列，或写进 `work/decisions.md`。
+- 每章 `check` 清零后运行 `terms-audit`，看哪些术语用词不一致。它默认只报告、不阻断；
+  `--strict` 才返回非零。合理变体补进第三列，确认漏译再改 `work/zh/`。
+- 新补的术语会影响已翻章节，用 `terms-audit --only <文件名>` 回扫，不要整本重翻。
 
 ## 六、翻译与成稿选项
 
@@ -98,7 +164,8 @@ work：/path/to/books/mybook-zh-project/work
 ## 七、验收与汇报
 
 - 抽查：封面、目录、一章正文、一个表格、一个代码块、索引页。
-- 汇报：输出路径、总块数/完成数、`check` 结果、`verify` 结果、遗留问题、抽查结论。
+- 汇报：输出路径、分块配置（large/small）、总块数/完成数、`check` 结果、`terms-audit`
+  结论、`verify` 结果、遗留问题、抽查结论。
 
 ## 八、工具调用契约
 
@@ -128,26 +195,34 @@ cd "$PROJECT"
   --title "$TITLE" \
   --source-title "$SOURCE_TITLE" \
   --author "$AUTHOR" \
-  --output "$OUTPUT"
+  --output "$OUTPUT" \
+  --profile large
 
 "$TOOL" extract --config book.toml
 "$TOOL" guide --config book.toml
 "$TOOL" status --config book.toml
+"$TOOL" prompt <stem> --chunk <n> --config book.toml
+"$TOOL" check <stem> --chunk <n> --config book.toml
 "$TOOL" check --config book.toml
+"$TOOL" terms-audit --config book.toml
 "$TOOL" build --config book.toml
 "$TOOL" verify --config book.toml
 ```
 
 固定流程：
 
-`init → extract → guide → 分块翻译 → 逐章 check → build → verify`
+`init → extract → guide → 分块翻译 → 逐章 check → terms-audit → build → verify`
 
 规则：
 
 - 新项目先 `init` + `extract`；已有 `book.toml` 时先 `status` + `check`，
   不要覆盖已有译文。
-- `check <章名>` 按文件检查；同一章多个分块未全部完成时会报缺失，整章完成
-  后再要求清零。
+- `--profile` 只在 `init` 时决定（`large`/`small`）。已有译文后用 `extract --profile`
+  切换会被拒绝；`--force` 会重切分块，等于要求重译，除非用户明确同意，不要使用。
+- `check <章名>` 按文件检查；`check <章名> --chunk <n>` 只检查一个分块，子代理自检用后者。
+- `status` 里的 `Np` 是 partial、`Nb` 是 broken；`prompt` 会给出续写或重写指令。
+- `prompt` 默认把提示词写到 `work/prompts/<stem>.<nn>.md`，终端只打印路径；
+  需要看内容时加 `--stdout`。
 - `build` 每次都从源 EPUB 重新复制并重建 `work/build`；不要手工修改
   `work/build`。
 - `verify` 检查最终 EPUB 的结构、链接、锚点和占位符；它不替代 `epubcheck`。
