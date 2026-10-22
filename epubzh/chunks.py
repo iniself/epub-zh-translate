@@ -3,7 +3,7 @@
 import hashlib
 import json
 import re
-from collections import Counter
+from collections import Counter, namedtuple
 from pathlib import Path
 
 from . import markup, spacing
@@ -91,7 +91,7 @@ def _ranges(nums):
     return ", ".join(out)
 
 
-def _marker_problems(parts, nseg, path=None):
+def _marker_problems(parts, nseg, path=None, chunk=None):
     """Point at duplicated, missing, and out-of-range segment markers."""
     counts = Counter(p[0] for p in parts)
     dup = sorted(n for n, c in counts.items() if c > 1)
@@ -123,6 +123,23 @@ def _marker_problems(parts, nseg, path=None):
                 pass
         if body:
             detail += " | seg %d%s: %s" % (dup[0], where, body)
+    if missing:
+        # A missing middle segment must be inserted in place. Name the exact
+        # neighbours and show the source so a weak model does not append it
+        # at the end of the file.
+        present = sorted(n for n in counts if 1 <= n <= nseg)
+        for num in missing[:3]:
+            prev = max([n for n in present if n < num], default=None)
+            nxt = min([n for n in present if n > num], default=None)
+            left = "@@@SEG %03d@@@" % prev if prev else "file start"
+            right = "@@@SEG %03d@@@" % nxt if nxt else "file end"
+            src = ""
+            if chunk is not None and 1 <= num <= len(chunk):
+                src = "; src: %s" % _clip(chunk[num - 1].text, 300)
+            detail += (" | missing seg %d: insert between %s and %s%s"
+                       % (num, left, right, src))
+        if len(missing) > 3:
+            detail += " | ... %d more missing" % (len(missing) - 3)
     return "segment markers != 1..%d (%s)" % (nseg, detail)
 
 
@@ -161,55 +178,81 @@ def _block_body(lines):
     return " ".join(body)
 
 
+RepairReport = namedtuple("RepairReport",
+                          "removed dropped reordered ambiguous")
+
+
 def repair_chunk(path, chunk):
-    """Remove duplicate segment blocks when the right copy is unambiguous.
+    """Repair mechanically invalid segment blocks in a translation file.
 
     Duplicates usually come from a bad edit-append boundary: the last segment
-    is included in both oldString and newString. Every candidate copy is
-    checked against the source placeholders; exactly one valid copy wins, and
-    identical copies collapse to the first. Anything ambiguous is left alone
-    and reported, so this never silently drops a real translation.
+    is included in both oldString and newString. The repair is deterministic:
 
-    Returns ``(removed, unresolved)`` segment numbers.
+    * blocks with segment numbers outside ``1..len(chunk)`` are dropped;
+    * for repeated numbers, one copy is kept:
+      - identical copies collapse to the first;
+      - exactly one placeholder-valid copy wins;
+      - otherwise the last valid copy is kept (or the last copy when none is
+        valid) and reported as ambiguous;
+    * remaining blocks are sorted by segment number when out of order.
+
+    Missing segments are not invented; ``parse_translation`` reports where
+    they belong. Returns a ``RepairReport``.
     """
     path = Path(path)
     if not path.exists():
-        return [], []
+        return RepairReport([], [], False, [])
     preamble, blocks = _split_blocks(path)
-    by_num = {}
-    for idx, (num, _) in enumerate(blocks):
-        by_num.setdefault(num, []).append(idx)
-    drop, removed, unresolved = set(), [], []
-    for num in sorted(n for n, idxs in by_num.items() if len(idxs) > 1):
+    drop = set()
+    removed, dropped, ambiguous = [], [], []
+
+    for i, (num, _) in enumerate(blocks):
         if num < 1 or num > len(chunk):
-            unresolved.append(num)
-            continue
+            drop.add(i)
+            dropped.append(num)
+
+    by_num = {}
+    for i, (num, _) in enumerate(blocks):
+        if i not in drop:
+            by_num.setdefault(num, []).append(i)
+
+    for num in sorted(n for n, idxs in by_num.items() if len(idxs) > 1):
         seg = chunk[num - 1]
         cand = by_num[num]
         bodies = [_block_body(blocks[i][1]) for i in cand]
         valid = [i for i, body in zip(cand, bodies)
                  if body and seg.check(body) is None]
-        if len(valid) == 1:
-            keep = valid[0]
-        elif len(set(bodies)) == 1:
+        if len(set(bodies)) == 1:
             keep = cand[0]
+        elif len(valid) == 1:
+            keep = valid[0]
+        elif valid:
+            keep = valid[-1]
+            ambiguous.append(num)
         else:
-            unresolved.append(num)
-            continue
+            keep = cand[-1]
+            ambiguous.append(num)
         for i in cand:
             if i != keep:
                 drop.add(i)
         removed.append(num)
-    if drop:
-        kept = [block for i, block in enumerate(blocks) if i not in drop]
+
+    kept = [block for i, block in enumerate(blocks) if i not in drop]
+    nums = [num for num, _ in kept]
+    reordered = nums != sorted(nums)
+    if reordered:
+        kept.sort(key=lambda block: block[0])
+
+    if drop or reordered:
         out = list(preamble)
         for _, lines in kept:
             out.extend(lines)
         path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
-    return removed, unresolved
+
+    return RepairReport(removed, sorted(set(dropped)), reordered, ambiguous)
 
 
-def parse_translation(path, nseg):
+def parse_translation(path, nseg, chunk=None):
     """Parse a translated chunk file into (texts, verbatim flags, error)."""
     path = Path(path)
     if not path.exists():
@@ -222,7 +265,7 @@ def parse_translation(path, nseg):
         if nums == list(range(1, len(nums) + 1)) and len(nums) < nseg:
             return None, None, ("partial: segments 1..%d of %d; append from %d"
                                 % (len(nums), nseg, len(nums) + 1))
-        return None, None, _marker_problems(parts, nseg, path)
+        return None, None, _marker_problems(parts, nseg, path, chunk)
     return [p[1] for p in parts], [p[2] for p in parts], None
 
 
@@ -382,15 +425,21 @@ def check_file(cfg, name, only_chunk=None, fix=True):
     for ci, chunk in targets:
         path = cfg.zh_dir / chunk_name(stem, ci)
         if fix:
-            removed, unresolved = repair_chunk(path, chunk)
-            if removed:
+            report = repair_chunk(path, chunk)
+            if report.dropped:
+                print("  fixed %s chunk %d: dropped out-of-range seg %s"
+                      % (name, ci, _ranges(report.dropped)))
+            if report.removed:
                 print("  fixed %s chunk %d: removed duplicate seg %s"
-                      % (name, ci, _ranges(removed)))
-            if unresolved:
-                print("  !! %s chunk %d: duplicate seg %s is ambiguous; "
-                      "rewrite this chunk with write"
-                      % (name, ci, _ranges(unresolved)))
-        translated, verbatim, err = parse_translation(path, len(chunk))
+                      % (name, ci, _ranges(report.removed)))
+            if report.reordered:
+                print("  fixed %s chunk %d: reordered segments"
+                      % (name, ci))
+            if report.ambiguous:
+                print("  !! %s chunk %d: kept the last copy of ambiguous "
+                      "seg %s; verify this segment"
+                      % (name, ci, _ranges(report.ambiguous)))
+        translated, verbatim, err = parse_translation(path, len(chunk), chunk)
         if err:
             problems.append("%s chunk %d: %s" % (name, ci, err))
             continue

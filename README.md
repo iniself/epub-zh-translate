@@ -196,8 +196,9 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
   `epubzh-run` is executable, and that the skill directory was not moved.
 - **`check` reports problems**: fix the reported chunk under `work/zh/`; do not
   edit `work/build`. For a subagent, use `check <stem> --chunk <n>` so it only
-  sees its own chunk. `check` drops unambiguous duplicate segment blocks
-  automatically; use `--no-fix` for a read-only check.
+  sees its own chunk. `check` repairs duplicate blocks, drops out-of-range
+  blocks, and sorts out-of-order chunks automatically; ambiguous duplicates
+  keep the last copy with a warning. Use `--no-fix` for a read-only check.
 - **The model keeps saying "I'll translate it" without writing**: the chunk is
   probably too large, or the generated prompt was not used. Switch to `small`,
   run `prompt` and hand `work/prompts/<stem>.<nn>.md` to one subagent per chunk.

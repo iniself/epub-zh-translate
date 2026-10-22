@@ -183,7 +183,8 @@ chmod +x ~/.config/opencode/skills/epub-zh-translate/epubzh-run
   目录是否被移动。
 - **`check` 报错**：修改 `work/zh/` 中对应的分块；不要修改 `work/build`。
   子代理自检请用 `check <章名> --chunk <n>`，整章检查只会报“其他分块缺失”。
-  `check` 默认会自动删除可判定的重复段块；只读检查用 `--no-fix`。
+  `check` 默认会自动修复重复段、越界段和乱序；歧义重复段保留最后一份并警告。
+  只读检查用 `--no-fix`。
 - **模型反复说“我将翻译”但不写文件**：通常是分块太大或没有用生成的提示词。改用
   `small` 配置，确认执行的是 `work/prompts/<stem>.<nn>.md`，一个分块一个 subagent；
   子代理若只回复计划，重发一句“读提示词文件，直接写文件，不要回复计划”。

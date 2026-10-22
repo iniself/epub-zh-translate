@@ -6,12 +6,12 @@ from pathlib import Path
 from epubzh import chunks, markup
 
 
-def make_seg(pairs=(), singles=()):
+def make_seg(pairs=(), singles=(), text=""):
     items = [{"kind": "pair", "open": "\u27e6%d\u27e7" % n,
               "close": "\u27e6/%d\u27e7" % n} for n in pairs]
     items += [{"kind": "single", "open": "\u27e6%d\u27e7" % n}
               for n in singles]
-    return markup.Segment(0, 0, "", items)
+    return markup.Segment(0, 0, text, items)
 
 
 def block(num, text):
@@ -31,31 +31,53 @@ class RepairChunkTest(unittest.TestCase):
     def test_identical_duplicates_collapse_to_first(self):
         path = self.write(block(1, "\u7532") + "\n" + block(1, "\u7532")
                           + "\n" + block(2, "\u27e60\u27e7\u4e59\u27e6/0\u27e7"))
-        removed, unresolved = chunks.repair_chunk(path, self.chunk)
-        self.assertEqual(removed, [1])
-        self.assertEqual(unresolved, [])
+        report = chunks.repair_chunk(path, self.chunk)
+        self.assertEqual(report.removed, [1])
+        self.assertEqual(report.ambiguous, [])
         self.assertEqual(path.read_text(encoding="utf-8").count("@@@SEG 001@@@"), 1)
 
     def test_keeps_the_only_valid_copy(self):
         path = self.write(block(1, "\u27e60\u27e7\u7532\u27e7")
                           + "\n" + block(1, "\u27e60\u27e7\u7532\u27e6/0\u27e7")
                           + "\n" + block(2, "\u27e60\u27e7\u4e59\u27e6/0\u27e7"))
-        removed, unresolved = chunks.repair_chunk(path, self.chunk)
-        self.assertEqual(removed, [1])
-        self.assertEqual(unresolved, [])
+        report = chunks.repair_chunk(path, self.chunk)
+        self.assertEqual(report.removed, [1])
+        self.assertEqual(report.ambiguous, [])
         body = path.read_text(encoding="utf-8")
         self.assertIn("\u27e60\u27e7\u7532\u27e6/0\u27e7", body)
         self.assertNotIn("\u27e60\u27e7\u7532\u27e7", body)
 
-    def test_ambiguous_duplicates_are_left_alone(self):
+    def test_ambiguous_duplicates_keep_last_copy(self):
         path = self.write(block(1, "\u27e60\u27e7\u7532\u27e7")
                           + "\n" + block(1, "\u27e61\u27e7\u4e59\u27e6/1\u27e7")
                           + "\n" + block(2, "\u27e60\u27e7\u4e19\u27e6/0\u27e7"))
-        before = path.read_text(encoding="utf-8")
-        removed, unresolved = chunks.repair_chunk(path, self.chunk)
-        self.assertEqual(removed, [])
-        self.assertEqual(unresolved, [1])
-        self.assertEqual(path.read_text(encoding="utf-8"), before)
+        report = chunks.repair_chunk(path, self.chunk)
+        self.assertEqual(report.removed, [1])
+        self.assertEqual(report.ambiguous, [1])
+        body = path.read_text(encoding="utf-8")
+        self.assertEqual(body.count("@@@SEG 001@@@"), 1)
+        self.assertIn("\u27e61\u27e7\u4e59\u27e6/1\u27e7", body)
+        self.assertNotIn("\u27e60\u27e7\u7532\u27e7", body)
+
+    def test_out_of_range_blocks_are_dropped(self):
+        path = self.write(block(0, "\u27e60\u27e7\u5e9f\u27e6/0\u27e7")
+                          + "\n" + block(1, "\u27e60\u27e7\u7532\u27e6/0\u27e7")
+                          + "\n" + block(2, "\u27e60\u27e7\u4e59\u27e6/0\u27e7")
+                          + "\n" + block(3, "\u27e60\u27e7\u4e19\u27e6/0\u27e7"))
+        report = chunks.repair_chunk(path, self.chunk)
+        self.assertEqual(report.dropped, [0, 3])
+        self.assertEqual(report.removed, [])
+        body = path.read_text(encoding="utf-8")
+        self.assertNotIn("@@@SEG 000@@@", body)
+        self.assertNotIn("@@@SEG 003@@@", body)
+
+    def test_complete_but_reordered_blocks_are_sorted(self):
+        path = self.write(block(2, "\u27e60\u27e7\u4e59\u27e6/0\u27e7")
+                          + "\n" + block(1, "\u27e60\u27e7\u7532\u27e6/0\u27e7"))
+        report = chunks.repair_chunk(path, self.chunk)
+        self.assertTrue(report.reordered)
+        body = path.read_text(encoding="utf-8")
+        self.assertLess(body.index("@@@SEG 001@@@"), body.index("@@@SEG 002@@@"))
 
 
 class TranslatableTest(unittest.TestCase):
@@ -90,6 +112,17 @@ class MarkerDiagnosticsTest(unittest.TestCase):
         error = chunks.parse_translation(path, 4)[2]
         self.assertIn("partial: segments 1..2 of 4", error)
         self.assertIn("append from 3", error)
+
+    def test_missing_middle_segment_names_insertion_point_and_source(self):
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text(block(1, "\u7532") + "\n" + block(2, "\u4e59")
+                        + "\n" + block(4, "\u4e01") + "\n", encoding="utf-8")
+        chunk = [make_seg(text="one"), make_seg(text="two"),
+                 make_seg(text="three"), make_seg(text="four")]
+        error = chunks.parse_translation(path, 4, chunk)[2]
+        self.assertIn("missing seg 3", error)
+        self.assertIn("between @@@SEG 002@@@ and @@@SEG 004@@@", error)
+        self.assertIn("src: three", error)
 
 
 class PlaceholderHintTest(unittest.TestCase):

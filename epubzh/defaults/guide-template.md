@@ -148,8 +148,10 @@ Building on the content summarization techniques from chapter 3, this chapter gu
 
 ## 九、自检不通过时
 
-- 用 `check --chunk N --fix` 自检；`--fix` 会自动删除明确可判定的重复段块。
-- 报 `segment markers`：按报错里的 `at line ...` 删掉重复段，或补齐缺失段。
+- 用 `check --chunk N --fix` 自检；`--fix` 会自动删除重复段、删除越界段、按段号排序。
+- 报 `segment markers` 且仍缺段时，按报错给出的 `insert between ... and ...`
+  在指定位置插入，不要追加到文件末尾。
+- 报 `kept the last copy of ambiguous seg N` 时，检查这一段；不确定就只重写这一段。
 - 报 `placeholder mismatch` / `stray placeholder` / `not translated` /
   `missing space`：只改报错的那一段，不要通读或重写整块。占位符类错误会给出
   完整原文和译文，单标记后面多出来的闭合标记要删掉。

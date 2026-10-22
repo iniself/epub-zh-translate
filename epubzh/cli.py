@@ -325,9 +325,9 @@ def build_parser():
     p.add_argument("only", nargs="?", help="only files whose name contains this string")
     p.add_argument("--chunk", type=int, help="validate a single chunk only")
     p.add_argument("--fix", dest="fix", action="store_true", default=True,
-                   help="drop duplicate segment blocks (default)")
+                   help="repair duplicate/out-of-range/reordered blocks (default)")
     p.add_argument("--no-fix", dest="fix", action="store_false",
-                   help="read-only check, do not repair duplicates")
+                   help="read-only check, do not repair blocks")
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("terms-audit",

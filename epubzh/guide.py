@@ -256,17 +256,20 @@ def _contract(cfg, stem, chunk, dst):
    - newString = oldString + 换行 + 新段，绝对不要在 newString 里重复最后一段。
    - `edit` 返回 identical / 找不到 oldString / 多处匹配时，不要重试，直接
      `write` 覆盖整个分块。
-3. 写完运行自检（`--fix` 会自动删除重复段）：
+3. 写完运行自检（`--fix` 会自动修复机械错误）：
    `%s check --config %s %s --chunk %d --fix`
 4. 自检报错按类型处理，不要通读整块：
-   - `segment markers`：`--fix` 后仍报，按报错里的 `at line ...` 删掉重复段；
-     报 missing 就补齐缺的段；仍不确定就用 `write` 重写整块。
+   - `segment markers`：`--fix` 会自动删除重复段、删除越界段、按段号排序；
+     仍报 `missing seg N: insert between ... and ...` 时，用 `edit` 在指定的
+     两个标记之间插入 `@@@SEG NNN@@@` 和该段译文，**不要追加到文件末尾**。
+   - 报 `kept the last copy of ambiguous seg N` 时，检查这一段是否正确；不确定就
+     只重写这一段。
    - `placeholder mismatch` / `stray placeholder` / `not translated` /
      `missing space`：只改报错的那一段。`edit` 的 oldString 必须是该段当前
      完整文本（标记行 + 译文），newString 是修正后的同一段。
    - `file missing`：只报其他分块时忽略并结束。
 5. 同一分块最多 3 轮自检；仍不过就只回复一行 `失败：<原因>` 并结束。
-6. 完成后只回复一行：`已写入 %s`
+6. 完成后只回复一行：`已写入 %s；check OK`
 """ % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk, dst)
 
 
@@ -364,7 +367,9 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     elif state == "broken":
         parts.append("## 已有文件编号异常")
         parts.append("")
-        parts.append("输出文件已存在但段号不连续，请整体重写为正确的 1..%d 段。" % nseg)
+        parts.append("输出文件已存在但段号不连续。先运行 `check --chunk %d --fix`；"
+                     "修复后仍不连续，再整体重写为正确的 1..%d 段。"
+                     % (chunk, nseg))
         parts.append("")
 
     parts.append(_contract(cfg, stem, chunk, dst).rstrip())

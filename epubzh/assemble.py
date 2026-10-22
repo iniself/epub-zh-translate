@@ -81,7 +81,8 @@ def _merge_file(cfg, name):
     stem = Path(name).stem
     for ci, chunk in enumerate(chunk_list, 1):
         path = cfg.zh_dir / chunks.chunk_name(stem, ci)
-        translated, verbatim, err = chunks.parse_translation(path, len(chunk))
+        translated, verbatim, err = chunks.parse_translation(
+            path, len(chunk), chunk)
         if err:
             return None, "chunk %d: %s" % (ci, err), 0
         for seg, text in zip(chunk, translated):
