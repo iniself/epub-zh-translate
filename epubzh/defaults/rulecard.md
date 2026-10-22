@@ -56,7 +56,8 @@
   在指定位置插入，不要追加到文件末尾。
 - 报 `kept the last copy of ambiguous seg N` 时，检查这一段；不确定就只重写这一段。
 - 报 `placeholder mismatch` / `stray placeholder` / `not translated` /
-  `missing space`：只改报错的那一段，不要通读或重写整块。
+  `missing space`：只改报错的那一段，不要通读或重写整块。`extra` 里的标记
+  一律删除；成对的多余标记整对删除，不要通过改编号来修复。
 - `edit` 返回 identical、找不到 oldString 或多处匹配：不要重试，直接 `write`
   覆盖整个分块。
 - 同一分块最多 3 轮自检；仍不过就回复一行失败原因并结束。

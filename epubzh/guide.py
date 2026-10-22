@@ -303,8 +303,9 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
    - 报 `kept the last copy of ambiguous seg N` 时，检查这一段是否正确；不确定就
      只重写这一段。
    - `placeholder mismatch` / `stray placeholder` / `not translated` /
-     `missing space`：只改报错的那一段。`edit` 的 oldString 必须是该段当前
-     完整文本（标记行 + 译文），newString 是修正后的同一段。
+     `missing space`：只改报错的那一段。`extra` 里的标记一律删除；成对的多余
+     标记整对删除，不要通过重新编号来修复。`edit` 的 oldString 必须是该段
+     当前完整文本（标记行 + 译文），newString 是修正后的同一段。
    - `file missing`：只报其他分块时忽略并结束。
 5. 同一分块最多 3 轮自检；仍不过就只回复一行 `失败：<原因>` 并结束。
 6. 完成后只回复一行：`已写入 %s；check OK`

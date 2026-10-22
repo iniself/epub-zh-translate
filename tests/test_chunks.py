@@ -130,6 +130,27 @@ class PlaceholderHintTest(unittest.TestCase):
         seg = make_seg(singles=(0,))
         bad = seg.check("\u27e60\u27e7\u7532\u27e6/0\u27e7")
         self.assertIn("is a single marker", bad)
+        self.assertIn("remove all extra markers", bad)
+        self.assertIn("do not renumber placeholders", bad)
+
+    def test_extra_pair_says_delete_whole_pair(self):
+        seg = make_seg(pairs=(3, 4))
+        bad = seg.check("\u27e63\u27e7\u7532\u27e6/3\u27e7"
+                        "\u27e64\u27e7\u4e59\u27e6/4\u27e7"
+                        "\u27e64\u27e7\u4e19\u27e6/4\u27e7")
+        self.assertIn("remove all extra markers: \u27e64\u27e7, \u27e6/4\u27e7",
+                      bad)
+        self.assertIn("delete extra pairs as a whole", bad)
+        self.assertIn("do not renumber placeholders", bad)
+
+    def test_extra_pair_and_single_close_are_both_named(self):
+        seg = make_seg(pairs=(3,), singles=(2,))
+        bad = seg.check("\u27e62\u27e7\u7532\u27e6/2\u27e7"
+                        "\u27e63\u27e7\u4e59\u27e6/3\u27e7"
+                        "\u27e63\u27e7\u4e19\u27e6/3\u27e7")
+        self.assertIn("remove all extra markers", bad)
+        self.assertIn("\u27e62\u27e7 is a single marker", bad)
+        self.assertIn("delete extra pairs as a whole", bad)
 
 
 if __name__ == "__main__":

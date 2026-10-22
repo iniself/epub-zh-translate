@@ -154,7 +154,8 @@ Building on the content summarization techniques from chapter 3, this chapter gu
 - 报 `kept the last copy of ambiguous seg N` 时，检查这一段；不确定就只重写这一段。
 - 报 `placeholder mismatch` / `stray placeholder` / `not translated` /
   `missing space`：只改报错的那一段，不要通读或重写整块。占位符类错误会给出
-  完整原文和译文，单标记后面多出来的闭合标记要删掉。
+  完整原文和译文；单标记后面多出来的闭合标记要删掉，成对的多余标记要整对
+  删除，不要通过改编号来修复。
 - `edit` 返回 identical、找不到 oldString 或多处匹配：不要重试，直接 `write`
   覆盖整个分块。
 - 同一分块最多 3 轮自检；仍不过就回复一行失败原因并结束。

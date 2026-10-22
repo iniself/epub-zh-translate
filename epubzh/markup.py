@@ -309,13 +309,21 @@ class Segment(object):
             hint = ""
             singles = {it["open"] for it in self.items
                        if it["kind"] == "single"}
-            for marker in remaining:
-                m = PH_RE.fullmatch(marker)
-                if (m and m.group(1).startswith("/")
-                        and placeholder(int(m.group(1)[1:])) in singles):
-                    hint = (" (%s is a single marker; remove the extra %s)"
-                            % (placeholder(int(m.group(1)[1:])), marker))
-                    break
+            if remaining:
+                bits = ["remove all extra markers: %s" % ", ".join(remaining),
+                        "delete extra pairs as a whole; do not renumber "
+                        "placeholders"]
+                single_closes = []
+                for marker in remaining:
+                    m = PH_RE.fullmatch(marker)
+                    if (m and m.group(1).startswith("/")
+                            and placeholder(int(m.group(1)[1:])) in singles):
+                        single_closes.append(
+                            placeholder(int(m.group(1)[1:])))
+                if single_closes:
+                    bits.append("%s is a single marker"
+                                % ", ".join(single_closes))
+                hint = " (%s)" % "; ".join(bits)
             return "placeholder mismatch: missing=%s extra=%s%s" % (
                 missing, remaining, hint)
         if has_stray_brackets(translated):
