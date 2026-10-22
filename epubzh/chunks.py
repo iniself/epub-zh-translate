@@ -179,7 +179,43 @@ def _block_body(lines):
 
 
 RepairReport = namedtuple("RepairReport",
-                          "removed dropped reordered ambiguous")
+                          "removed dropped reordered ambiguous placeholders")
+
+
+def _remove_extra_single_closes(lines, seg):
+    """Remove ``⟦/n⟧`` when ``n`` is an unpaired single marker.
+
+    The source proves that ``⟦n⟧`` has no closing marker in this segment, so
+    every ``⟦/n⟧`` is a mechanical mistake. Removing it cannot change the
+    visible translation. Extra paired markers stay untouched because choosing
+    which pair to delete would require guessing at meaning.
+    """
+    body = "\n".join(lines[1:])
+    got = [m.group(0) for m in markup.PH_RE.finditer(body)]
+    want = []
+    for item in seg.items:
+        want.append(item["open"])
+        if item["kind"] == "pair":
+            want.append(item["close"])
+    remaining = list(got)
+    for marker in want:
+        if marker in remaining:
+            remaining.remove(marker)
+    singles = {item["open"] for item in seg.items
+               if item["kind"] == "single"}
+    removed = []
+    for marker in remaining:
+        match = markup.PH_RE.fullmatch(marker)
+        if not (match and match.group(1).startswith("/")):
+            continue
+        number = int(match.group(1)[1:])
+        if markup.placeholder(number) not in singles or marker not in body:
+            continue
+        body = body.replace(marker, "", 1)
+        removed.append(marker)
+    if not removed:
+        return lines, []
+    return [lines[0]] + (body.split("\n") if body else []), removed
 
 
 def repair_chunk(path, chunk):
@@ -194,14 +230,16 @@ def repair_chunk(path, chunk):
       - exactly one placeholder-valid copy wins;
       - otherwise the last valid copy is kept (or the last copy when none is
         valid) and reported as ambiguous;
-    * remaining blocks are sorted by segment number when out of order.
+    * remaining blocks are sorted by segment number when out of order;
+    * an extra ``⟦/n⟧`` for a single ``⟦n⟧`` is removed (the source has no
+      closing marker, so this is unambiguous).
 
     Missing segments are not invented; ``parse_translation`` reports where
     they belong. Returns a ``RepairReport``.
     """
     path = Path(path)
     if not path.exists():
-        return RepairReport([], [], False, [])
+        return RepairReport([], [], False, [], [])
     preamble, blocks = _split_blocks(path)
     drop = set()
     removed, dropped, ambiguous = [], [], []
@@ -243,13 +281,24 @@ def repair_chunk(path, chunk):
     if reordered:
         kept.sort(key=lambda block: block[0])
 
-    if drop or reordered:
+    placeholder_fixes = []
+    for block in kept:
+        num, lines = block
+        if not 1 <= num <= len(chunk):
+            continue
+        fixed, markers = _remove_extra_single_closes(lines, chunk[num - 1])
+        if markers:
+            block[1] = fixed
+            placeholder_fixes.append((num, markers))
+
+    if drop or reordered or placeholder_fixes:
         out = list(preamble)
         for _, lines in kept:
             out.extend(lines)
         path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 
-    return RepairReport(removed, sorted(set(dropped)), reordered, ambiguous)
+    return RepairReport(removed, sorted(set(dropped)), reordered, ambiguous,
+                        placeholder_fixes)
 
 
 def parse_translation(path, nseg, chunk=None):
@@ -389,14 +438,17 @@ def _looks_translatable(body):
     return True
 
 
-def check_file(cfg, name, only_chunk=None, fix=True):
+def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False):
     """Check translated chunks of one source file. Returns problems.
 
     ``only_chunk`` restricts validation to a single chunk, so a translator
     working on one chunk does not see "file missing" for its siblings.
+    ``skip_missing`` omits chunks that have not been started yet; project-wide
+    checks use it so expected missing files do not drown out real errors.
     ``fix`` (default on) first removes duplicate segment blocks produced by a
-    bad append boundary. Ambiguous duplicates are reported instead of guessed
-    at. Pass ``fix=False`` for a read-only check.
+    bad append boundary, and extra closing markers for single placeholders.
+    Ambiguous duplicates are reported instead of guessed at. Pass ``fix=False``
+    for a read-only check.
     """
     index = read_index(cfg)
     if name not in index:
@@ -424,6 +476,8 @@ def check_file(cfg, name, only_chunk=None, fix=True):
         targets = list(enumerate(chunks, 1))
     for ci, chunk in targets:
         path = cfg.zh_dir / chunk_name(stem, ci)
+        if skip_missing and not path.exists():
+            continue
         if fix:
             report = repair_chunk(path, chunk)
             if report.dropped:
@@ -439,6 +493,12 @@ def check_file(cfg, name, only_chunk=None, fix=True):
                 print("  !! %s chunk %d: kept the last copy of ambiguous "
                       "seg %s; verify this segment"
                       % (name, ci, _ranges(report.ambiguous)))
+            if report.placeholders:
+                detail = "; ".join(
+                    "seg %d: %s" % (num, ", ".join(markers))
+                    for num, markers in report.placeholders)
+                print("  fixed %s chunk %d: removed extra single-marker "
+                      "close(s) %s" % (name, ci, detail))
         translated, verbatim, err = parse_translation(path, len(chunk), chunk)
         if err:
             problems.append("%s chunk %d: %s" % (name, ci, err))

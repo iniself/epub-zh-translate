@@ -80,6 +80,49 @@ class RepairChunkTest(unittest.TestCase):
         self.assertLess(body.index("@@@SEG 001@@@"), body.index("@@@SEG 002@@@"))
 
 
+class PlaceholderRepairTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def write(self, text):
+        path = self.tmp / "chunk.txt"
+        path.write_text(text + "\n", encoding="utf-8")
+        return path
+
+    def test_extra_close_for_single_marker_is_removed(self):
+        chunk = [make_seg(singles=(2,), text="two")]
+        path = self.write(block(1, "\u27e62\u27e7\u7532\u27e6/2\u27e7"))
+        report = chunks.repair_chunk(path, chunk)
+        self.assertEqual(report.placeholders,
+                         [(1, ["\u27e6/2\u27e7"])])
+        body = path.read_text(encoding="utf-8")
+        self.assertIn("\u27e62\u27e7\u7532", body)
+        self.assertNotIn("\u27e6/2\u27e7", body)
+        self.assertIsNone(chunk[0].check("\u27e62\u27e7\u7532"))
+
+    def test_extra_pair_is_not_removed_automatically(self):
+        chunk = [make_seg(pairs=(3,), text="three")]
+        duplicate = ("\u27e63\u27e7\u7532\u27e6/3\u27e7"
+                     "\u27e63\u27e7\u4e59\u27e6/3\u27e7")
+        path = self.write(block(1, duplicate))
+        report = chunks.repair_chunk(path, chunk)
+        self.assertEqual(report.placeholders, [])
+        self.assertEqual(path.read_text(encoding="utf-8").count("\u27e63\u27e7"), 2)
+
+    def test_safe_close_removed_while_ambiguous_pair_remains(self):
+        chunk = [make_seg(pairs=(3,), singles=(2,), text="mixed")]
+        body = ("\u27e62\u27e7\u7532\u27e6/2\u27e7"
+                "\u27e63\u27e7\u4e59\u27e6/3\u27e7"
+                "\u27e63\u27e7\u4e19\u27e6/3\u27e7")
+        path = self.write(block(1, body))
+        report = chunks.repair_chunk(path, chunk)
+        self.assertEqual(report.placeholders,
+                         [(1, ["\u27e6/2\u27e7"])])
+        fixed = path.read_text(encoding="utf-8")
+        self.assertNotIn("\u27e6/2\u27e7", fixed)
+        self.assertIn("\u27e63\u27e7\u4e19\u27e6/3\u27e7", fixed)
+
+
 class TranslatableTest(unittest.TestCase):
     def test_names_and_labels_are_not_flagged(self):
         for text in ("Chris Hughes", "DistributedApps.ai, Herndon, VA, USA",
@@ -132,6 +175,13 @@ class PlaceholderHintTest(unittest.TestCase):
         self.assertIn("is a single marker", bad)
         self.assertIn("remove all extra markers", bad)
         self.assertIn("do not renumber placeholders", bad)
+        self.assertIn("numbers are per segment", bad)
+
+    def test_same_number_in_different_segments_is_valid(self):
+        paired = make_seg(pairs=(2,))
+        single = make_seg(singles=(2,))
+        self.assertIsNone(paired.check("\u27e62\u27e7\u7532\u27e6/2\u27e7"))
+        self.assertIsNone(single.check("\u27e62\u27e7\u4e59"))
 
     def test_extra_pair_says_delete_whole_pair(self):
         seg = make_seg(pairs=(3, 4))

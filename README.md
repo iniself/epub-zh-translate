@@ -197,8 +197,13 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
 - **`check` reports problems**: fix the reported chunk under `work/zh/`; do not
   edit `work/build`. For a subagent, use `check <stem> --chunk <n>` so it only
   sees its own chunk. `check` repairs duplicate blocks, drops out-of-range
-  blocks, and sorts out-of-order chunks automatically; ambiguous duplicates
-  keep the last copy with a warning. Use `--no-fix` for a read-only check.
+  blocks, sorts out-of-order chunks, and removes an extra closing marker for a
+  single `⟦n⟧`; ambiguous duplicates keep the last copy with a warning. Use
+  `--no-fix` for a read-only check. A project-wide `check` skips chunks that
+  have not been started; use `check --all` for final validation.
+- **Resume an existing project**: run `next --config ...`; it selects one chunk
+  that needs work and writes its prompt. Run `next` again after that chunk
+  passes. Do not start with a project-wide `check`.
 - **The model keeps saying "I'll translate it" without writing**: the chunk is
   probably too large, or the generated prompt was not used. Switch to `small`,
   run `prompt` and hand `work/prompts/<stem>.<nn>.md` to one subagent per chunk.
@@ -217,6 +222,7 @@ For manual diagnosis only:
 
 ```bash
 TOOL=~/.config/opencode/skills/epub-zh-translate/epubzh-run
+"$TOOL" next --config /path/to/project/book.toml
 "$TOOL" status --config /path/to/project/book.toml
 "$TOOL" <command> --help
 ```

@@ -312,7 +312,7 @@ class Segment(object):
             if remaining:
                 bits = ["remove all extra markers: %s" % ", ".join(remaining),
                         "delete extra pairs as a whole; do not renumber "
-                        "placeholders"]
+                        "placeholders (numbers are per segment)"]
                 single_closes = []
                 for marker in remaining:
                     m = PH_RE.fullmatch(marker)
@@ -321,7 +321,7 @@ class Segment(object):
                         single_closes.append(
                             placeholder(int(m.group(1)[1:])))
                 if single_closes:
-                    bits.append("%s is a single marker"
+                    bits.append("%s is a single marker in this segment"
                                 % ", ".join(single_closes))
                 hint = " (%s)" % "; ".join(bits)
             return "placeholder mismatch: missing=%s extra=%s%s" % (

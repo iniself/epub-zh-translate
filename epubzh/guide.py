@@ -249,7 +249,18 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
     check_cmd = "%s check --config %s %s --chunk %d --fix" % (
         _module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk)
 
-    if state == "broken":
+    if state == "repair":
+        first = (
+            "1. 输出文件已有完整译文，但自检未通过。你的第一条动作必须是运行自检：\n"
+            "   `%s`\n"
+            "   不要先写文件，不要整块重写，也不要重新编号。`--fix` 只处理\n"
+            "   机械错误；仍报错的段按第 4 条只改那一段。" % check_cmd
+        )
+        second = (
+            "2. 只改自检点名的段。`placeholder mismatch` 的 `extra` 标记直接删除；\n"
+            "   源文是单独 `⟦n⟧` 时不要补 `⟦/n⟧`。占位符编号每段独立，不要跨段比较。"
+        )
+    elif state == "broken":
         first = (
             "1. 输出文件已存在但段号不连续。你的第一条动作必须是运行自检修复：\n"
             "   `%s`\n"
@@ -274,6 +285,14 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
             "   最后一段。`edit` 返回 identical / 找不到 / 多处匹配时不要重试；先\n"
             "   `read` 完整文件，再 `write` 覆盖，确保第 1–%d 段原样保留。"
             % (last + 1, last)
+        )
+    elif state == "done":
+        first = (
+            "1. 输出文件已存在，段号完整且自检通过。默认不要重写；只有用户明确\n"
+            "   要求重译时，才先删除输出文件再重新翻译。"
+        )
+        second = (
+            "2. 如果用户要求局部修改，只改指定段落，不要通读或重写整块。"
         )
     else:
         first = (
@@ -304,23 +323,51 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
      只重写这一段。
    - `placeholder mismatch` / `stray placeholder` / `not translated` /
      `missing space`：只改报错的那一段。`extra` 里的标记一律删除；成对的多余
-     标记整对删除，不要通过重新编号来修复。`edit` 的 oldString 必须是该段
-     当前完整文本（标记行 + 译文），newString 是修正后的同一段。
+     标记整对删除，不要通过重新编号来修复。占位符编号是每段独立的，不同段可以
+     重复使用 `⟦0⟧`、`⟦1⟧`、`⟦2⟧`；不要跨段比较编号，也不要为了全局唯一改编号。
+     `edit` 的 oldString 必须是该段当前完整文本（标记行 + 译文），newString 是
+     修正后的同一段。
    - `file missing`：只报其他分块时忽略并结束。
-5. 同一分块最多 3 轮自检；仍不过就只回复一行 `失败：<原因>` 并结束。
-6. 完成后只回复一行：`已写入 %s；check OK`
+5. 同一段同一个错误连续 2 次 `check` 仍出现，停止修改并只回复一行
+   `失败：<段号 + 原因>`；不要继续猜。
+6. 同一分块最多 3 轮自检；仍不过就只回复一行 `失败：<原因>` 并结束。
+7. 完成后只回复一行：`已写入 %s；check OK`
 """ % (first, second, check_cmd, dst)
 
 
 def _opening(state, chunk, last):
     """State-aware first action, so recovery prompts do not contradict."""
+    if state == "repair":
+        return ("**立即开始：先运行 `check --chunk %d --fix` 查看并修复现有译文；"
+                "文件已有完整译文，不要整块重写；不要先回复计划。**" % chunk)
     if state == "partial":
         return ("**立即开始：读完输入文件后先 `read` 输出文件末尾，确认最后一段"
                 "编号 %d，再从下一段继续追加；不要先回复计划。**" % last)
     if state == "broken":
         return ("**立即开始：先运行 `check --chunk %d --fix` 修复段号，"
                 "不要先写文件；不要先回复计划。**" % chunk)
+    if state == "done":
+        return ("**该分块已完成且自检通过；默认不要重写。只有用户明确要求重译时，"
+                "才删除输出文件后重新翻译。**")
     return "**立即开始：读完输入文件后直接写输出文件，不要先回复计划。**"
+
+
+def _chunk_prompt_state(cfg, filename, chunk, nseg):
+    """Numbering state plus a content check for completed chunk files.
+
+    ``chunk_state`` only looks at segment numbers. A file can have all
+    segments and still fail placeholder/spacing checks; that is a ``repair``
+    job, not a fresh translation. Telling a model to "write the whole chunk"
+    in that case destroys good work and restarts the loop.
+    """
+    stem = Path(filename).stem
+    dst = cfg.zh_dir / chunks.chunk_name(stem, chunk)
+    state, last = chunks.chunk_state(dst, nseg)
+    if state == "done":
+        problems = chunks.check_file(cfg, filename, only_chunk=chunk, fix=False)
+        if problems:
+            return "repair", nseg
+    return state, last
 
 
 def _build_prompt(cfg, name, chunk, index, full=False):
@@ -331,7 +378,7 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     nseg = chunks.chunk_counts(cfg, name, info)[chunk - 1]
     chunk_text = src.read_text(encoding="utf-8")
     use_full = full or cfg.profile == "large"
-    state, last = chunks.chunk_state(dst, nseg)
+    state, last = _chunk_prompt_state(cfg, name, chunk, nseg)
 
     parts = []
     parts.append("你是资深技术图书译者，正在翻译《%s》的一个分块。" %
@@ -414,6 +461,13 @@ def _build_prompt(cfg, name, chunk, index, full=False):
                      "从 `@@@SEG %03d@@@` 开始追加到文件末尾；"
                      "补齐后再按执行契约自检。" % (last, last + 1))
         parts.append("")
+    elif state == "repair":
+        parts.append("## 已有译文需要修复")
+        parts.append("")
+        parts.append("输出文件的段号完整，但自检发现了占位符、空格或未翻译问题。"
+                     "先运行 `check --chunk %d --fix`；只修改自检点名的段，"
+                     "不要整块重写，也不要重新编号。" % chunk)
+        parts.append("")
     elif state == "broken":
         parts.append("## 已有文件编号异常")
         parts.append("")
@@ -427,16 +481,16 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     return "\n".join(parts) + "\n"
 
 
-def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False):
+def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False,
+           quiet=False):
     index = chunks.read_index(cfg)
     if not name:
         pending = []
-        for filename in sorted(index):
+        for filename in _ordered_index(cfg, index):
             stem = Path(filename).stem
             counts = chunks.chunk_counts(cfg, filename, index[filename])
             for ci, nseg in enumerate(counts, 1):
-                state, last = chunks.chunk_state(
-                    cfg.zh_dir / chunks.chunk_name(stem, ci), nseg)
+                state, last = _chunk_prompt_state(cfg, filename, ci, nseg)
                 if state != "done":
                     pending.append((stem, ci, state, last, nseg))
         if not pending:
@@ -450,6 +504,8 @@ def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False):
                 extra = " (partial %d/%d)" % (last, nseg)
             elif state == "broken":
                 extra = " (broken)"
+            elif state == "repair":
+                extra = " (repair)"
             print("  %s %d%s" % (stem, ci, extra))
         print("\nusage: %s prompt <file-stem> --chunk <n>" % _module_cmd(cfg))
         return
@@ -471,8 +527,7 @@ def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False):
             filename, info["chunks"], info["segments"], info["words"]))
         counts = chunks.chunk_counts(cfg, filename, info)
         for ci, nseg in enumerate(counts, 1):
-            state, last = chunks.chunk_state(
-                cfg.zh_dir / chunks.chunk_name(stem, ci), nseg)
+            state, last = _chunk_prompt_state(cfg, filename, ci, nseg)
             extra = " (%d/%d)" % (last, nseg) if state == "partial" else ""
             print("  chunk %d: %s%s" % (ci, state, extra))
         return
@@ -490,11 +545,58 @@ def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False):
     cfg.prompts_dir.mkdir(parents=True, exist_ok=True)
     path = cfg.prompts_dir / ("%s.%02d.md" % (stem, chunk))
     if path.exists() and not force and path.read_text(encoding="utf-8") == text:
-        print("prompt unchanged: %s" % path)
+        if not quiet:
+            print("prompt unchanged: %s" % path)
     else:
         path.write_text(text, encoding="utf-8")
-        print("wrote %s" % path)
-    print("→ 交给一个 subagent 执行（一个分块一个 subagent），"
-          "不要在主会话里直接翻译")
-    print("→ 自检：%s check --config %s %s --chunk %d --fix"
-          % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk))
+        if not quiet:
+            print("wrote %s" % path)
+    if not quiet:
+        print("→ 交给一个 subagent 执行（一个分块一个 subagent），"
+              "不要在主会话里直接翻译")
+        print("→ 自检：%s check --config %s %s --chunk %d --fix"
+              % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk))
+    return path
+
+
+def _ordered_index(cfg, index):
+    """Index keys in OPF spine order, falling back to file name order."""
+    order = _spine_order(cfg)
+    if not order:
+        return sorted(index)
+
+    def key(name):
+        rank = order.get(name)
+        if rank is None:
+            stem = Path(name).stem
+            for candidate, candidate_rank in order.items():
+                if Path(candidate).stem == stem:
+                    rank = candidate_rank
+                    break
+        return (0, rank if rank is not None else 10 ** 9, name)
+
+    return sorted(index, key=key)
+
+
+def next_target(cfg):
+    """First chunk that still needs work.
+
+    Existing work that needs attention (repair / partial / broken) wins over
+    starting a new chunk, because a broken resume point is usually the chunk
+    the previous session was working on. Within each group, reading order is
+    preserved. Completed files are re-checked (read-only) so a chunk with all
+    segment numbers but a placeholder error is returned as ``repair`` instead
+    of being skipped as ``done``.
+    """
+    index = chunks.read_index(cfg)
+    first_pending = None
+    for filename in _ordered_index(cfg, index):
+        counts = chunks.chunk_counts(cfg, filename, index[filename])
+        for ci, nseg in enumerate(counts, 1):
+            state, last = _chunk_prompt_state(cfg, filename, ci, nseg)
+            target = (filename, ci, state, last, nseg)
+            if state in ("repair", "partial", "broken"):
+                return target
+            if state == "pending" and first_pending is None:
+                first_pending = target
+    return first_pending

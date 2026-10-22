@@ -2,6 +2,7 @@
 """Command line interface for the epubzh pipeline."""
 import argparse
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -209,21 +210,59 @@ def cmd_check(args):
     if args.chunk and len(names) != 1:
         raise SystemExit("--chunk needs exactly one matching file, matched %d"
                          % len(names))
+    skip_missing = (args.only is None and args.chunk is None
+                    and not args.all)
     all_problems = []
+    results = []
     for name in names:
         problems = chunks.check_file(cfg, name, only_chunk=args.chunk,
-                                     fix=args.fix)
+                                     fix=args.fix, skip_missing=skip_missing)
         all_problems.extend(problems)
+        results.append((name, problems))
+    for name, problems in results:
+        # A project-wide check should only surface files that need attention;
+        # printing every pending file as "OK" drowns out the real problem.
+        if not problems and not (args.only or args.chunk):
+            continue
         mark = "OK" if not problems else "%d problem(s)" % len(problems)
         if args.chunk:
             mark += " (chunk %d)" % args.chunk
         print("%-38s %s" % (name, mark))
     print("\n%d file(s), %d problem(s)" % (len(names), len(all_problems)))
+    if skip_missing:
+        print("note: chunks without a translation file are skipped; "
+              "use --all to require every chunk")
     for problem in all_problems[:80]:
         print("  !!", problem)
     if len(all_problems) > 80:
         print("  ... %d more" % (len(all_problems) - 80))
     return 1 if all_problems else 0
+
+
+def cmd_next(args):
+    cfg = config.load(args.config)
+    target = guide.next_target(cfg)
+    if not target:
+        print("all chunks translated")
+        return 0
+    filename, chunk, state, last, nseg = target
+    stem = Path(filename).stem
+    path = guide.prompt(cfg, stem, chunk, quiet=True)
+    detail = ""
+    if state == "partial":
+        detail = " partial %d/%d" % (last, nseg)
+    elif state == "repair":
+        detail = " needs repair"
+    elif state == "broken":
+        detail = " broken numbering"
+    print("next: %s chunk %d/%d%s" % (filename, chunk, nseg, detail))
+    print("prompt: %s" % path)
+    print("output: %s" % (cfg.zh_dir / chunks.chunk_name(stem, chunk)))
+    print("action: read the prompt and execute only this chunk; "
+          "do not run a project-wide check")
+    print("check: %s check --config %s %s --chunk %d --fix"
+          % (guide._module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk))
+    return 0
 
 
 def cmd_merge(args):
@@ -324,11 +363,17 @@ def build_parser():
     p = sub.add_parser("check", help="validate translated chunks")
     p.add_argument("only", nargs="?", help="only files whose name contains this string")
     p.add_argument("--chunk", type=int, help="validate a single chunk only")
+    p.add_argument("--all", action="store_true",
+                   help="require every chunk; without it, a project-wide check "
+                        "skips chunks that have not been started")
     p.add_argument("--fix", dest="fix", action="store_true", default=True,
                    help="repair duplicate/out-of-range/reordered blocks (default)")
     p.add_argument("--no-fix", dest="fix", action="store_false",
                    help="read-only check, do not repair blocks")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("next", help="show and write the next chunk prompt")
+    p.set_defaults(func=cmd_next)
 
     p = sub.add_parser("terms-audit",
                        help="check glossary terms against translated chunks")

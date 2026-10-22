@@ -109,7 +109,8 @@ work：/path/to/books/mybook-zh-project/work
 ## 三、流程与质量门槛
 
 1. 如果项目目录没有 `book.toml`：先 `init` + `extract`，确认所有文件 round-trip 通过后再开始翻译。
-   如果已有 `book.toml`：先运行 `status` + `check`，确认是续跑还是新项目；不要覆盖已有译文。
+   如果已有 `book.toml`：先运行 `next`，从它给出的那一块继续；需要看总进度时再
+   运行 `status`。**不要先跑全项目 `check`**，未开始的分块会刷屏。不要覆盖已有译文。
 2. 阅读目录、前言和前两章，完善 `work/terms.tsv`，然后运行 `guide`；它会生成 `work/TRANSLATION_GUIDE.md`。
 3. 正文按分块翻译，流程见下面的“分块翻译”；每个分块写完后用 `check --chunk --fix` 自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译、中英文空格）。
 4. 全部完成后运行 `build` 和 `verify`；XML、内部链接、锚点、占位符必须零错误。构建前运行一次
@@ -123,18 +124,34 @@ work：/path/to/books/mybook-zh-project/work
 ```bash
 TOOL="<skill-base>/epubzh-run"
 
-# 1. 看还剩哪些分块（partial / broken 会标出来）
+# 1. 选择下一块（优先修 broken/partial，再继续 pending；一次只给一块）
+"$TOOL" next --config book.toml
+
+# 2. 需要看总进度时才运行 status
 "$TOOL" status --config book.toml
 
-# 2. 生成该分块的提示词（写到 work/prompts/<stem>.<nn>.md）
+# 3. 生成该分块的提示词（写到 work/prompts/<stem>.<nn>.md）
 "$TOOL" prompt <stem> --chunk <n>
 
-# 3. 把提示词文件路径交给一个 subagent，让它读文件并执行
+# 4. 把提示词文件路径交给一个 subagent，让它读文件并执行
 #    一个分块一个 subagent；不要复制粘贴提示词正文
 
-# 4. 只校验这一块（--fix 自动修复重复段、越界段和乱序）
+# 5. 只校验这一块（--fix 自动修复机械错误）
 "$TOOL" check --config book.toml <stem> --chunk <n> --fix
 ```
+
+### 继续已有项目（包括小模型）
+
+用户只给项目目录时，不要自己重新规划整本书，也不要先跑全项目管理命令。按这个循环走：
+
+1. `next --config <book.toml>`：它只返回一个分块，并生成对应的 prompt 文件；
+2. 读 `next` 打印的 prompt 路径，按执行契约只处理这一块；
+3. `check <stem> --chunk <n> --fix`；
+4. 通过后再运行一次 `next`，直到没有下一块。
+
+`next` 优先返回已有译文需要处理的分块（repair / partial / broken），再按阅读顺序开始新的
+pending 分块；所以不需要先跑全项目 `check`。项目级 `check` 默认跳过还没有译文文件的分块；
+只有最终验收时才加 `--all` 要求所有分块都存在。`check <stem>` 仍会严格检查该文件的所有分块。
 
 硬规则：
 
@@ -144,12 +161,19 @@ TOOL="<skill-base>/epubzh-run"
 - 子代理如果反复说“我将翻译”“Actually, I'll just translate it”却不动手，说明它没有按
   提示词执行：重发一句“读 `<prompt 文件>`，按执行契约直接写文件，不要回复计划”，
   不要追加解释，也不要换一种说法反复劝。
-- 同一分块连续 3 次 `check --chunk --fix` 不过，停下来报告用户，不要继续重试。
+- 继续已有项目时，第一条命令是 `next`，不是 `status`，更不是项目级 `check`。`next`
+  一次只给一个分块；处理完再 `next`。
+- 占位符编号是**每段独立**的：不同段可以重复 `⟦0⟧`、`⟦1⟧`、`⟦2⟧`。不要跨段比较
+  编号，也不要为了“全局唯一”改编号。
+- 同一段同一个错误连续 2 次 `check` 仍出现，停止派发，把该段号和报错报告给用户；
+  不要继续猜。同一分块最多 3 轮 `check --chunk --fix`，仍不过就停止。
 - `check --chunk --fix` 会先做确定性的修复：
   - 段号越界的块直接删除；
   - 重复段块中只有一份占位符正确时保留那一份，多份内容相同时保留第一份；
   - 多份都不同且无法判断时保留最后一份并打印 `kept the last copy` 警告；
-  - 段号完整但顺序错误时按段号排序。
+  - 段号完整但顺序错误时按段号排序；
+  - 源文是单独标记 `⟦n⟧`、译文多出 `⟦/n⟧` 时，直接删除这个多余闭合标记。
+    成对的多余标记仍只报告，不自动猜删哪一对。
 - `check --chunk` 的报错会带 `src:` 和 `got:` 两行；占位符类错误给全文，不截断。
   段号写成 `seg 8/40`，对应文件里的 `@@@SEG 008@@@`，按这一段只改那一行，不要
   通读整块。报 `segment markers` 时会点名重复/缺失段号和重复段所在行号；缺中间段
@@ -269,10 +293,12 @@ CONFIG="$PROJECT/book.toml"
 
 "$TOOL" extract --config "$CONFIG"
 "$TOOL" guide --config "$CONFIG"
+"$TOOL" next --config "$CONFIG"
 "$TOOL" status --config "$CONFIG"
 "$TOOL" prompt <stem> --chunk <n> --config "$CONFIG"
 "$TOOL" check <stem> --chunk <n> --config "$CONFIG"
 "$TOOL" check --config "$CONFIG"
+"$TOOL" check --config "$CONFIG" --all
 "$TOOL" terms-audit --config "$CONFIG"
 "$TOOL" build --config "$CONFIG"
 "$TOOL" verify --config "$CONFIG"
@@ -280,7 +306,7 @@ CONFIG="$PROJECT/book.toml"
 
 固定流程：
 
-`init → extract → guide → 分块翻译 → 逐章 check → terms-audit → build → verify`
+`init → extract → guide → next/分块翻译 → 逐章 check → terms-audit → build → verify`
 
 规则：
 
@@ -290,12 +316,17 @@ CONFIG="$PROJECT/book.toml"
   目录而不是 `*-project/` 时立刻停下重来。
 - `--source` 找不到时，工具会列出搜过的目录和候选 `.epub`；按提示把书放到输出目录
   或修正路径，不要换目录反复试。
-- 新项目先 `init` + `extract`；已有 `book.toml` 时先 `status` + `check`，
-  不要覆盖已有译文。
+- 新项目先 `init` + `extract`；已有 `book.toml` 时先 `next`，从它给出的那一块继续，
+  不要先跑全项目 `check`，也不要覆盖已有译文。
 - `--profile` 只在 `init` 时决定（`large`/`small`）。已有译文后用 `extract --profile`
   切换会被拒绝；`--force` 会重切分块，等于要求重译，除非用户明确同意，不要使用。
-- `check <章名>` 按文件检查；`check <章名> --chunk <n>` 只检查一个分块，子代理自检用后者。
+- `next` 先返回已有译文需要处理的分块（repair / partial / broken），再返回第一个
+  pending 分块，并生成对应 prompt；它不会修改译文。
+- `check <章名>` 按文件严格检查所有分块；`check <章名> --chunk <n>` 只检查一个分块，
+  子代理自检用后者。项目级 `check` 默认跳过尚未开始的分块，最终验收用
+  `check --all` 要求所有分块都存在。
 - `status` 里的 `Np` 是 partial、`Nb` 是 broken；`prompt` 会给出续写或重写指令。
+  如果分块段号完整但自检有错，`prompt` 会标记为 repair，要求先修复而不是重写。
 - `prompt` 默认把提示词写到 `work/prompts/<stem>.<nn>.md`，终端只打印路径；
   需要看内容时加 `--stdout`。
 - `build` 每次都从源 EPUB 重新复制并重建 `work/build`；不要手工修改
