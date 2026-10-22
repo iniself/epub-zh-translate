@@ -186,6 +186,41 @@ class MarkerDiagnosticsTest(unittest.TestCase):
         self.assertIn("src: three", error)
 
 
+class PlaceholderOrderTest(unittest.TestCase):
+    def test_grouped_closes_at_end_are_rejected(self):
+        seg = make_seg(pairs=(0, 1))
+        bad = seg.check("\u27e60\u27e7\u7532\u27e61\u27e7\u4e59"
+                        "\u27e6/0\u27e7\u27e6/1\u27e7")
+        self.assertIn("placeholder order mismatch", bad)
+        self.assertIn("source order", bad)
+        self.assertIn("single markers may move", bad)
+
+    def test_pairs_in_source_order_pass(self):
+        seg = make_seg(pairs=(0, 1))
+        self.assertIsNone(seg.check("\u27e60\u27e7\u7532\u27e6/0\u27e7"
+                                    "\u3001\u27e61\u27e7\u4e59\u27e6/1\u27e7"))
+
+    def test_single_marker_can_move(self):
+        seg = make_seg(pairs=(0,), singles=(1,))
+        self.assertIsNone(seg.check("\u27e60\u27e7\u7532\u27e6/0\u27e7"
+                                    " \u4e59\u27e61\u27e7"))
+
+    def test_nested_pairs_follow_source_text(self):
+        seg = make_seg(pairs=(0, 1))
+        seg.text = "\u27e60\u27e7\u27e61\u27e7\u7532\u27e6/1\u27e7\u27e6/0\u27e7"
+        self.assertIsNone(seg.check(
+            "\u27e60\u27e7\u27e61\u27e7\u4e59\u27e6/1\u27e7\u27e6/0\u27e7"))
+        bad = seg.check("\u27e60\u27e7\u27e61\u27e7\u4e59\u27e6/0\u27e7\u27e6/1\u27e7")
+        self.assertIn("placeholder order mismatch", bad)
+
+    def test_missing_pair_close_gets_placement_hint(self):
+        seg = make_seg(pairs=(0,))
+        bad = seg.check("\u27e60\u27e7\u7532")
+        self.assertIn("missing=", bad)
+        self.assertIn("immediately after its translated span", bad)
+        self.assertIn("not at the end of the segment", bad)
+
+
 class PlaceholderHintTest(unittest.TestCase):
     def test_extra_close_for_single_marker_gets_hint(self):
         seg = make_seg(singles=(0,))

@@ -306,13 +306,14 @@ class Segment(object):
                     remaining.remove(w)
                 else:
                     missing.append(w)
-            hint = ""
+            bits = []
             singles = {it["open"] for it in self.items
                        if it["kind"] == "single"}
             if remaining:
-                bits = ["remove all extra markers: %s" % ", ".join(remaining),
-                        "delete extra pairs as a whole; do not renumber "
-                        "placeholders (numbers are per segment)"]
+                bits.append("remove all extra markers: %s"
+                            % ", ".join(remaining))
+                bits.append("delete extra pairs as a whole; do not renumber "
+                            "placeholders (numbers are per segment)")
                 single_closes = []
                 for marker in remaining:
                     m = PH_RE.fullmatch(marker)
@@ -323,7 +324,12 @@ class Segment(object):
                 if single_closes:
                     bits.append("%s is a single marker in this segment"
                                 % ", ".join(single_closes))
-                hint = " (%s)" % "; ".join(bits)
+            pair_closes = {it["close"] for it in self.items
+                           if it["kind"] == "pair"}
+            if any(marker in pair_closes for marker in missing):
+                bits.append("put each pair close immediately after its "
+                            "translated span, not at the end of the segment")
+            hint = " (%s)" % "; ".join(bits) if bits else ""
             return "placeholder mismatch: missing=%s extra=%s%s" % (
                 missing, remaining, hint)
         if has_stray_brackets(translated):
@@ -336,6 +342,27 @@ class Segment(object):
                     return "duplicated placeholder %s" % it["close"]
                 if translated.find(it["open"]) > translated.find(it["close"]):
                     return "reordered placeholder %s" % it["open"]
+        pair_markers = set()
+        item_pairs = []
+        for it in self.items:
+            if it["kind"] == "pair":
+                pair_markers.add(it["open"])
+                pair_markers.add(it["close"])
+                item_pairs.extend([it["open"], it["close"]])
+        source_markers = [m.group(0) for m in PH_RE.finditer(self.text)]
+        # Real segments carry the source marker sequence in self.text, including
+        # nesting. Constructed test segments may have no text, so fall back to
+        # item order for those.
+        want_pairs = ([marker for marker in source_markers
+                       if marker in pair_markers]
+                      if source_markers else item_pairs)
+        got_pairs = [marker for marker in got if marker in pair_markers]
+        if got_pairs != want_pairs:
+            return ("placeholder order mismatch: expected=%s got=%s "
+                    "(paired markers must stay in source order; put each "
+                    "close immediately after its translated span, not all at "
+                    "the end; single markers may move)"
+                    % (want_pairs, got_pairs))
         return None
 
     def render(self, translated):

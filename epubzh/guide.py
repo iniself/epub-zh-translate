@@ -321,10 +321,12 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
      两个标记之间插入 `@@@SEG NNN@@@` 和该段译文，**不要追加到文件末尾**。
    - 报 `kept the last copy of ambiguous seg N` 时，检查这一段是否正确；不确定就
      只重写这一段。
-   - `placeholder mismatch` / `stray placeholder` / `missing space`：只改报错的
-     那一段。`extra` 里的标记一律删除；成对的多余标记整对删除，不要通过重新编号
-     来修复。占位符编号是每段独立的，不同段可以重复使用 `⟦0⟧`、`⟦1⟧`、`⟦2⟧`；
-     不要跨段比较编号，也不要为了全局唯一改编号。
+   - `placeholder mismatch` / `placeholder order mismatch` / `stray placeholder` /
+     `missing space`：只改报错的那一段。`extra` 里的标记一律删除；成对的多余标记
+     整对删除，不要通过重新编号来修复。占位符编号是每段独立的，不同段可以重复使用
+     `⟦0⟧`、`⟦1⟧`、`⟦2⟧`；不要跨段比较编号，也不要为了全局唯一改编号。成对占位符
+     必须保持源文顺序，开标记放在对应译文前，闭标记紧跟对应译文后；只有单独占位符
+     可以随语序移动。
      `edit` 的 oldString 必须是该段当前完整文本（标记行 + 译文），newString 是
      修正后的同一段。
    - `not translated`：先判断这一段是否真的需要翻译。人名、机构、地址、代码、URL、

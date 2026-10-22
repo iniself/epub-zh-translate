@@ -63,7 +63,8 @@
 * 不得新增、删除、合并、拆分、改写任何占位符（包括把 `{{OPEN}}1{{CLOSE}}` 写成 `[1]`）。
   占位符的完整形式是 `{{OPEN}}0{{CLOSE}}`、`{{OPEN}}/0{{CLOSE}}`：**必须连数字一起保留**，
   不能只留两侧的 `{{OPEN}}` `{{CLOSE}}`。
-* 允许为了中文语序在句子内移动占位符，但配对关系不能变。
+* 单个占位符可以为了中文语序在句子内移动；成对占位符必须保持源文顺序：
+  开标记放在对应译文前，闭标记紧跟对应译文后，**不要把闭标记集中到段尾**。
 * 段落开头/结尾的空白可有可无。
 
 ## 四、翻译风格
@@ -156,10 +157,11 @@ Building on the content summarization techniques from chapter 3, this chapter gu
 - 报 `segment markers` 且仍缺段时，按报错给出的 `insert between ... and ...`
   在指定位置插入，不要追加到文件末尾。
 - 报 `kept the last copy of ambiguous seg N` 时，检查这一段；不确定就只重写这一段。
-- 报 `placeholder mismatch` / `stray placeholder` / `missing space`：只改报错的
-  那一段，不要通读或重写整块。占位符类错误会给出完整原文和译文；单标记后面
-  多出来的闭合标记要删掉，成对的多余标记要整对删除，不要通过改编号来修复。
-  占位符编号每段独立，不要跨段比较。
+- 报 `placeholder mismatch` / `placeholder order mismatch` / `stray placeholder` /
+  `missing space`：只改报错的那一段，不要通读或重写整块。占位符类错误会给出完整
+  原文和译文；单标记后面多出来的闭合标记要删掉，成对的多余标记要整对删除，不要
+  通过改编号来修复。占位符编号每段独立，不要跨段比较。成对占位符必须保持源文顺序，
+  闭标记紧跟对应译文；只有单独占位符可以随语序移动。
 - 报 `not translated`：先判断这段是否真的需要翻译。人名、机构、地址、代码、URL、
   应保留原文的标题等，原样保留，并在该段内单独加一行 `@@@VERBATIM@@@`（段首或
   段尾都可以）；确实需要翻译的，只改报错的这一段。
