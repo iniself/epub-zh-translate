@@ -418,44 +418,19 @@ def _context(seg, translated, limit=110):
                                           clip(" ".join(translated.split())))
 
 
-NAME_PART_RE = re.compile(
-    r"^[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}$")
-NAME_JOIN_RE = re.compile(r"\s+(?:and|&)\s+", re.IGNORECASE)
-
-
-def _looks_like_name_pair(body):
-    """True for short metadata such as "Ken Huang and Chris Hughes".
-
-    A conjunction alone is not enough: both sides must be capitalized name
-    parts, and at least one side must contain a given name plus a surname.
-    This keeps "Research and Development" translatable while accepting author
-    lists that would otherwise loop between "not translated" and VERBATIM.
-    """
-    text = body.strip().strip(".,;:")
-    parts = NAME_JOIN_RE.split(text)
-    if len(parts) != 2:
-        return False
-    if not all(NAME_PART_RE.fullmatch(part.strip()) for part in parts):
-        return False
-    return any(len(part.split()) >= 2 for part in parts)
-
-
 def _looks_translatable(body):
     """True when a Latin-only segment is prose, not a name/label/address.
 
-    Names ("Chris Hughes"), name pairs ("Ken Huang and Chris Hughes"),
-    affiliations ("DistributedApps.ai, Herndon, VA, USA"), labels
-    ("Figure 1.1"), and URLs are not prose. Flagging them as "not translated"
-    makes small models edit them in place, get an identical edit, and loop.
-    Longer all-capitalized runs are still treated as prose.
+    Names ("Chris Hughes"), affiliations ("DistributedApps.ai, Herndon, VA,
+    USA"), labels ("Figure 1.1"), and URLs are not prose. Flagging them as
+    "not translated" makes small models edit them in place, get an identical
+    edit, and loop. Longer all-capitalized runs are still treated as prose.
     """
     words = body.split()
     if not words or not any(re.search("[A-Za-z]", w) for w in words):
         return False
     if re.fullmatch(r"(?:https?://|www\.|mailto:|doi:\s*)\S+", body,
                     re.IGNORECASE):
-        return False
-    if _looks_like_name_pair(body):
         return False
     if not any(w[:1].islower() for w in words):
         # A short capitalized run, or a comma-separated address, is a proper
@@ -550,9 +525,12 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False):
             if cfg.require_latin and re.search("[A-Za-z]", seg.text) \
                     and not CJK_RE.search(body) and not short \
                     and _looks_translatable(body):
-                problems.append("%s chunk %d seg %d/%d: not translated%s"
-                                % (name, ci, pos, width,
-                                   _context(seg, text)))
+                problems.append(
+                    "%s chunk %d seg %d/%d: not translated (if this is a "
+                    "name, address, code, or heading that should stay in the "
+                    "source language, add a separate @@@VERBATIM@@@ line in "
+                    "this segment)%s"
+                    % (name, ci, pos, width, _context(seg, text)))
             missing = spacing.has_missing_space(text)
             if missing:
                 problems.append("%s chunk %d seg %d/%d: missing space around Latin, "

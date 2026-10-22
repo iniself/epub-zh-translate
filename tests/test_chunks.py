@@ -138,20 +138,6 @@ class VerbatimMarkerTest(unittest.TestCase):
         self.assertEqual(chunks.load_marked(path), [(1, "Ken Huang", True)])
 
 
-class NameListTest(unittest.TestCase):
-    def test_author_pair_is_not_flagged_as_prose(self):
-        for text in ("Ken Huang and Chris Hughes",
-                     "Ken Huang & Chris Hughes"):
-            self.assertFalse(chunks._looks_translatable(text), text)
-
-    def test_short_title_phrase_is_still_translatable(self):
-        self.assertTrue(chunks._looks_translatable("Research and Development"))
-
-    def test_lowercase_prose_is_still_translatable(self):
-        self.assertTrue(chunks._looks_translatable(
-            "Artificial intelligence and security"))
-
-
 class TranslatableTest(unittest.TestCase):
     def test_names_and_labels_are_not_flagged(self):
         for text in ("Chris Hughes", "DistributedApps.ai, Herndon, VA, USA",
@@ -163,7 +149,10 @@ class TranslatableTest(unittest.TestCase):
         for text in ("This is a complete sentence",
                      "Agentic AI uses tools",
                      "AI Agents Are Transforming Security",
-                     "Artificial intelligence is transforming security"):
+                     "Artificial intelligence is transforming security",
+                     "Artificial Intelligence and Machine Learning",
+                     "AI Security and Risk Management",
+                     "Research and Development"):
             self.assertTrue(chunks._looks_translatable(text), text)
 
 

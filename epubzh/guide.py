@@ -321,12 +321,15 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
      两个标记之间插入 `@@@SEG NNN@@@` 和该段译文，**不要追加到文件末尾**。
    - 报 `kept the last copy of ambiguous seg N` 时，检查这一段是否正确；不确定就
      只重写这一段。
-   - `placeholder mismatch` / `stray placeholder` / `not translated` /
-     `missing space`：只改报错的那一段。`extra` 里的标记一律删除；成对的多余
-     标记整对删除，不要通过重新编号来修复。占位符编号是每段独立的，不同段可以
-     重复使用 `⟦0⟧`、`⟦1⟧`、`⟦2⟧`；不要跨段比较编号，也不要为了全局唯一改编号。
+   - `placeholder mismatch` / `stray placeholder` / `missing space`：只改报错的
+     那一段。`extra` 里的标记一律删除；成对的多余标记整对删除，不要通过重新编号
+     来修复。占位符编号是每段独立的，不同段可以重复使用 `⟦0⟧`、`⟦1⟧`、`⟦2⟧`；
+     不要跨段比较编号，也不要为了全局唯一改编号。
      `edit` 的 oldString 必须是该段当前完整文本（标记行 + 译文），newString 是
      修正后的同一段。
+   - `not translated`：先判断这一段是否真的需要翻译。人名、机构、地址、代码、URL、
+     应保留原文的标题等，原样保留，并在该段内单独加一行 `@@@VERBATIM@@@`（段首或
+     段尾都可以）；确实需要翻译的，只改报错的这一段。
    - `file missing`：只报其他分块时忽略并结束。
 5. 同一段同一个错误连续 2 次 `check` 仍出现，停止修改并只回复一行
    `失败：<段号 + 原因>`；不要继续猜。

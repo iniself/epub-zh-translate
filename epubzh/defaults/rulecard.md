@@ -58,10 +58,12 @@
 - 报 `segment markers` 且仍缺段时，按报错给出的 `insert between ... and ...`
   在指定位置插入，不要追加到文件末尾。
 - 报 `kept the last copy of ambiguous seg N` 时，检查这一段；不确定就只重写这一段。
-- 报 `placeholder mismatch` / `stray placeholder` / `not translated` /
-  `missing space`：只改报错的那一段，不要通读或重写整块。`extra` 里的标记
-  一律删除；成对的多余标记整对删除，不要通过改编号来修复。占位符编号每段独立，
-  不要跨段比较，也不要为了全局唯一改编号。
+- 报 `placeholder mismatch` / `stray placeholder` / `missing space`：只改报错的
+  那一段，不要通读或重写整块。`extra` 里的标记一律删除；成对的多余标记整对删除，
+  不要通过改编号来修复。占位符编号每段独立，不要跨段比较，也不要为了全局唯一改编号。
+- 报 `not translated`：先判断这段是否真的需要翻译。人名、机构、地址、代码、URL、
+  应保留原文的标题等，原样保留，并在该段内单独加一行 `@@@VERBATIM@@@`（段首或
+  段尾都可以）；确实需要翻译的，只改报错的这一段。
 - `edit` 返回 identical、找不到 oldString 或多处匹配：不要重试，直接 `write`
   覆盖整个分块。
 - 同一段同一个错误连续 2 次自检仍出现，停止修改并回复失败原因；同一分块最多
