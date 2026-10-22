@@ -581,17 +581,30 @@ def _ordered_index(cfg, index):
     return sorted(index, key=key)
 
 
-def next_target(cfg):
+def next_target(cfg, resume=False):
     """First chunk that still needs work.
 
-    Existing work that needs attention (repair / partial / broken) wins over
-    starting a new chunk, because a broken resume point is usually the chunk
-    the previous session was working on. Within each group, reading order is
-    preserved. Completed files are re-checked (read-only) so a chunk with all
-    segment numbers but a placeholder error is returned as ``repair`` instead
-    of being skipped as ``done``.
+    By default this follows reading order: the first chunk that is not done is
+    returned, even if a later chunk is broken or partial. That keeps progress
+    sequential and avoids a later file jumping ahead of unstarted front matter.
+
+    With ``resume=True``, existing work that needs attention (repair / partial
+    / broken) wins over starting a new chunk, because a broken resume point is
+    usually the chunk the previous session was working on. Within each group,
+    reading order is preserved. Completed files are re-checked (read-only) so a
+    chunk with all segment numbers but a placeholder error is returned as
+    ``repair`` instead of being skipped as ``done``.
     """
     index = chunks.read_index(cfg)
+    if not resume:
+        for filename in _ordered_index(cfg, index):
+            counts = chunks.chunk_counts(cfg, filename, index[filename])
+            for ci, nseg in enumerate(counts, 1):
+                state, last = _chunk_prompt_state(cfg, filename, ci, nseg)
+                if state != "done":
+                    return (filename, ci, state, last, nseg)
+        return None
+
     first_pending = None
     for filename in _ordered_index(cfg, index):
         counts = chunks.chunk_counts(cfg, filename, index[filename])

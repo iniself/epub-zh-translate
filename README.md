@@ -201,9 +201,10 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
   single `⟦n⟧`; ambiguous duplicates keep the last copy with a warning. Use
   `--no-fix` for a read-only check. A project-wide `check` skips chunks that
   have not been started; use `check --all` for final validation.
-- **Resume an existing project**: run `next --config ...`; it selects one chunk
-  that needs work and writes its prompt. Run `next` again after that chunk
-  passes. Do not start with a project-wide `check`.
+- **Resume an existing project**: run `next --config ...`; by default it follows
+  reading order and selects the first unfinished chunk. Run `next` again after
+  that chunk passes. Add `--resume` only when the user wants to continue an
+  interrupted or broken chunk first. Do not start with a project-wide `check`.
 - **The model keeps saying "I'll translate it" without writing**: the chunk is
   probably too large, or the generated prompt was not used. Switch to `small`,
   run `prompt` and hand `work/prompts/<stem>.<nn>.md` to one subagent per chunk.
@@ -223,6 +224,7 @@ For manual diagnosis only:
 ```bash
 TOOL=~/.config/opencode/skills/epub-zh-translate/epubzh-run
 "$TOOL" next --config /path/to/project/book.toml
+"$TOOL" next --resume --config /path/to/project/book.toml
 "$TOOL" status --config /path/to/project/book.toml
 "$TOOL" <command> --help
 ```

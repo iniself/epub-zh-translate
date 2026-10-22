@@ -124,8 +124,11 @@ work：/path/to/books/mybook-zh-project/work
 ```bash
 TOOL="<skill-base>/epubzh-run"
 
-# 1. 选择下一块（优先修 broken/partial，再继续 pending；一次只给一块）
+# 1. 选择下一块（默认按阅读顺序；一次只给一块）
 "$TOOL" next --config book.toml
+
+# 只有用户要求“从上次中断处继续/先修复坏块”时才加 --resume
+"$TOOL" next --config book.toml --resume
 
 # 2. 需要看总进度时才运行 status
 "$TOOL" status --config book.toml
@@ -149,9 +152,11 @@ TOOL="<skill-base>/epubzh-run"
 3. `check <stem> --chunk <n> --fix`；
 4. 通过后再运行一次 `next`，直到没有下一块。
 
-`next` 优先返回已有译文需要处理的分块（repair / partial / broken），再按阅读顺序开始新的
-pending 分块；所以不需要先跑全项目 `check`。项目级 `check` 默认跳过还没有译文文件的分块；
-只有最终验收时才加 `--all` 要求所有分块都存在。`check <stem>` 仍会严格检查该文件的所有分块。
+`next` 默认严格按阅读顺序返回第一个不是 `done` 的分块；后面的 broken/partial 不会插队。
+只有用户明确说“从上次中断处继续”或“先修复坏块”时，才用 `next --resume`，它优先返回
+repair / partial / broken，再按顺序补 pending。所以不需要先跑全项目 `check`。项目级
+`check` 默认跳过还没有译文文件的分块；只有最终验收时才加 `--all` 要求所有分块都存在。
+`check <stem>` 仍会严格检查该文件的所有分块。
 
 硬规则：
 
@@ -320,8 +325,9 @@ CONFIG="$PROJECT/book.toml"
   不要先跑全项目 `check`，也不要覆盖已有译文。
 - `--profile` 只在 `init` 时决定（`large`/`small`）。已有译文后用 `extract --profile`
   切换会被拒绝；`--force` 会重切分块，等于要求重译，除非用户明确同意，不要使用。
-- `next` 先返回已有译文需要处理的分块（repair / partial / broken），再返回第一个
-  pending 分块，并生成对应 prompt；它不会修改译文。
+- `next` 默认按阅读顺序返回第一个不是 `done` 的分块，并生成对应 prompt；它不会修改
+  译文。用户要求从上次中断处继续时用 `next --resume`，它先返回 repair / partial /
+  broken，再按顺序补 pending。
 - `check <章名>` 按文件严格检查所有分块；`check <章名> --chunk <n>` 只检查一个分块，
   子代理自检用后者。项目级 `check` 默认跳过尚未开始的分块，最终验收用
   `check --all` 要求所有分块都存在。

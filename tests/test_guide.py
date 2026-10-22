@@ -99,7 +99,7 @@ class NextTargetTest(unittest.TestCase):
             target = guide.next_target(cfg)
         self.assertEqual(target, ("chapter.html", 2, "repair", 1, 1))
 
-    def test_existing_work_wins_over_starting_a_new_chunk(self):
+    def test_strict_order_starts_first_pending_before_later_repair(self):
         index = {"chapter.html": {"chunks": 2}}
         cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"))
         with mock.patch.object(guide.chunks, "read_index", return_value=index), \
@@ -108,6 +108,17 @@ class NextTargetTest(unittest.TestCase):
                 mock.patch.object(guide, "_chunk_prompt_state",
                                   side_effect=[("pending", 0), ("repair", 1)]):
             target = guide.next_target(cfg)
+        self.assertEqual(target, ("chapter.html", 1, "pending", 0, 1))
+
+    def test_resume_prioritizes_existing_work(self):
+        index = {"chapter.html": {"chunks": 2}}
+        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"))
+        with mock.patch.object(guide.chunks, "read_index", return_value=index), \
+                mock.patch.object(guide.chunks, "chunk_counts",
+                                  return_value=[1, 1]), \
+                mock.patch.object(guide, "_chunk_prompt_state",
+                                  side_effect=[("pending", 0), ("repair", 1)]):
+            target = guide.next_target(cfg, resume=True)
         self.assertEqual(target, ("chapter.html", 2, "repair", 1, 1))
 
     def test_returns_none_when_everything_is_done(self):

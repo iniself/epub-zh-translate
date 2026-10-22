@@ -241,7 +241,7 @@ def cmd_check(args):
 
 def cmd_next(args):
     cfg = config.load(args.config)
-    target = guide.next_target(cfg)
+    target = guide.next_target(cfg, resume=args.resume)
     if not target:
         print("all chunks translated")
         return 0
@@ -373,6 +373,9 @@ def build_parser():
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("next", help="show and write the next chunk prompt")
+    p.add_argument("--resume", action="store_true",
+                   help="resume existing repair/partial/broken chunks first "
+                        "instead of following strict reading order")
     p.set_defaults(func=cmd_next)
 
     p = sub.add_parser("terms-audit",

@@ -186,8 +186,10 @@ chmod +x ~/.config/opencode/skills/epub-zh-translate/epubzh-run
   `check` 默认会自动修复重复段、越界段、乱序，以及单独占位符 `⟦n⟧` 后面多出来的
   `⟦/n⟧`；歧义重复段保留最后一份并警告。只读检查用 `--no-fix`。
   项目级 `check` 默认跳过尚未开始的分块，最终验收用 `check --all`。
-- **继续已有项目**：运行 `next --config ...`，它只给出一个需要处理的分块和对应的
-  prompt 文件；处理完再运行 `next`。不要先跑全项目 `check`。
+- **继续已有项目**：运行 `next --config ...`，默认按阅读顺序给出第一个未完成分块
+  和对应的 prompt 文件；处理完再运行 `next`。只有要恢复上次中断或损坏的分块时，
+  才用 `next --config ... --resume` 让 repair/partial/broken 优先。不要先跑全项目
+  `check`。
 - **模型反复说“我将翻译”但不写文件**：通常是分块太大或没有用生成的提示词。改用
   `small` 配置，确认执行的是 `work/prompts/<stem>.<nn>.md`，一个分块一个 subagent；
   子代理若只回复计划，重发一句“读提示词文件，直接写文件，不要回复计划”。
@@ -206,6 +208,7 @@ chmod +x ~/.config/opencode/skills/epub-zh-translate/epubzh-run
 ```bash
 TOOL=~/.config/opencode/skills/epub-zh-translate/epubzh-run
 "$TOOL" next --config /path/to/project/book.toml
+"$TOOL" next --resume --config /path/to/project/book.toml
 "$TOOL" status --config /path/to/project/book.toml
 "$TOOL" <command> --help
 ```
