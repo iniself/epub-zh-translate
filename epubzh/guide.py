@@ -245,19 +245,57 @@ def _rulecard():
     return config_mod.DEFAULT_RULECARD.read_text(encoding="utf-8")
 
 
-def _contract(cfg, stem, chunk, dst):
+def _contract(cfg, stem, chunk, dst, state, last, nseg):
+    check_cmd = "%s check --config %s %s --chunk %d --fix" % (
+        _module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk)
+
+    if state == "broken":
+        first = (
+            "1. 输出文件已存在但段号不连续。你的第一条动作必须是运行自检修复：\n"
+            "   `%s`\n"
+            "   不要先写文件，不要整块重写。`--fix` 会自动删除重复段、删除越界段、\n"
+            "   按段号排序；修复后若仍报段号不连续，才进入第 2 条。" % check_cmd
+        )
+        second = (
+            "2. 修复后只处理自检报错的段，不要通读或重写整块。报\n"
+            "   `missing seg N: insert between ...` 时按第 4 条在指定位置插入；\n"
+            "   只有文件结构严重损坏、无法按段号修复时，才用 `write` 重写整个\n"
+            "   分块为正确的 1..%d 段。" % nseg
+        )
+    elif state == "partial":
+        first = (
+            "1. 输出文件已有第 1–%d 段。第一条动作是 `read` 文件末尾，确认最后一段\n"
+            "   编号 %d；不要 `write` 覆盖已有内容，也不要从第 1 段重写。"
+            % (last, last)
+        )
+        second = (
+            "2. 从 `@@@SEG %03d@@@` 开始追加：`edit` 的 oldString 只取最后一段\n"
+            "   （标记行 + 译文），newString = oldString + 换行 + 新段，绝对不要重复\n"
+            "   最后一段。`edit` 返回 identical / 找不到 / 多处匹配时不要重试；先\n"
+            "   `read` 完整文件，再 `write` 覆盖，确保第 1–%d 段原样保留。"
+            % (last + 1, last)
+        )
+    else:
+        first = (
+            "1. 你的第一条动作必须是写输出文件；不要复述任务、不要解释思路、不要输出\n"
+            "   「我将翻译」「Actually, I'll ...」这类句子。"
+        )
+        second = (
+            "2. 优先一次 `write` 写完整个分块，不要习惯性边写边追加。只有 `write` 明显\n"
+            "   被截断时才追加；追加前先 `read` 文件末尾，确认最后一段编号 n：\n"
+            "   - oldString 只取最后一段（`@@@SEG nnn@@@` + 该段译文），不要带上倒数第二段。\n"
+            "   - newString = oldString + 换行 + 新段，绝对不要在 newString 里重复最后一段。\n"
+            "   - `edit` 返回 identical / 找不到 oldString / 多处匹配时，不要重试，直接\n"
+            "     `write` 覆盖整个分块。"
+        )
+
     return """## 执行契约（务必遵守，违反任何一条都会导致返工）
 
-1. 你的第一条动作必须是写输出文件；不要复述任务、不要解释思路、不要输出
-   「我将翻译」「Actually, I'll ...」这类句子。
-2. 优先一次 `write` 写完整个分块，不要习惯性边写边追加。只有 `write` 明显
-   被截断时才追加；追加前先 `read` 文件末尾，确认最后一段编号 n：
-   - oldString 只取最后一段（`@@@SEG nnn@@@` + 该段译文），不要带上倒数第二段。
-   - newString = oldString + 换行 + 新段，绝对不要在 newString 里重复最后一段。
-   - `edit` 返回 identical / 找不到 oldString / 多处匹配时，不要重试，直接
-     `write` 覆盖整个分块。
-3. 写完运行自检（`--fix` 会自动修复机械错误）：
-   `%s check --config %s %s --chunk %d --fix`
+%s
+
+%s
+3. 运行自检（`--fix` 会自动修复机械错误）：
+   `%s`
 4. 自检报错按类型处理，不要通读整块：
    - `segment markers`：`--fix` 会自动删除重复段、删除越界段、按段号排序；
      仍报 `missing seg N: insert between ... and ...` 时，用 `edit` 在指定的
@@ -270,7 +308,18 @@ def _contract(cfg, stem, chunk, dst):
    - `file missing`：只报其他分块时忽略并结束。
 5. 同一分块最多 3 轮自检；仍不过就只回复一行 `失败：<原因>` 并结束。
 6. 完成后只回复一行：`已写入 %s；check OK`
-""" % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk, dst)
+""" % (first, second, check_cmd, dst)
+
+
+def _opening(state, chunk, last):
+    """State-aware first action, so recovery prompts do not contradict."""
+    if state == "partial":
+        return ("**立即开始：读完输入文件后先 `read` 输出文件末尾，确认最后一段"
+                "编号 %d，再从下一段继续追加；不要先回复计划。**" % last)
+    if state == "broken":
+        return ("**立即开始：先运行 `check --chunk %d --fix` 修复段号，"
+                "不要先写文件；不要先回复计划。**" % chunk)
+    return "**立即开始：读完输入文件后直接写输出文件，不要先回复计划。**"
 
 
 def _build_prompt(cfg, name, chunk, index, full=False):
@@ -281,6 +330,7 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     nseg = chunks.chunk_counts(cfg, name, info)[chunk - 1]
     chunk_text = src.read_text(encoding="utf-8")
     use_full = full or cfg.profile == "large"
+    state, last = chunks.chunk_state(dst, nseg)
 
     parts = []
     parts.append("你是资深技术图书译者，正在翻译《%s》的一个分块。" %
@@ -292,7 +342,7 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     parts.append("输入文件：%s" % src)
     parts.append("输出文件：%s" % dst)
     parts.append("")
-    parts.append("**立即开始：读完输入文件后直接写输出文件，不要先回复计划。**")
+    parts.append(_opening(state, chunk, last))
     parts.append("")
 
     if use_full:
@@ -356,7 +406,6 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             parts.append(body.rstrip())
             parts.append("")
 
-    state, last = chunks.chunk_state(dst, nseg)
     if state == "partial":
         parts.append("## 这是一个未写完的分块")
         parts.append("")
@@ -368,11 +417,12 @@ def _build_prompt(cfg, name, chunk, index, full=False):
         parts.append("## 已有文件编号异常")
         parts.append("")
         parts.append("输出文件已存在但段号不连续。先运行 `check --chunk %d --fix`；"
-                     "修复后仍不连续，再整体重写为正确的 1..%d 段。"
-                     % (chunk, nseg))
+                     "修复后按自检报错只处理对应段：缺段按指定位置插入，"
+                     "只有结构严重损坏、无法按段号修复时，才整体重写为正确的 "
+                     "1..%d 段。" % (chunk, nseg))
         parts.append("")
 
-    parts.append(_contract(cfg, stem, chunk, dst).rstrip())
+    parts.append(_contract(cfg, stem, chunk, dst, state, last, nseg).rstrip())
     return "\n".join(parts) + "\n"
 
 
