@@ -123,6 +123,35 @@ class PlaceholderRepairTest(unittest.TestCase):
         self.assertIn("\u27e63\u27e7\u4e19\u27e6/3\u27e7", fixed)
 
 
+class VerbatimMarkerTest(unittest.TestCase):
+    def test_marker_after_body_is_recognized(self):
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text(block(1, "Ken Huang and Chris Hughes")
+                        + "\n@@@VERBATIM@@@\n", encoding="utf-8")
+        self.assertEqual(chunks.load_marked(path),
+                         [(1, "Ken Huang and Chris Hughes", True)])
+
+    def test_marker_before_body_is_recognized(self):
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text(block(1, "@@@VERBATIM@@@\nKen Huang"),
+                        encoding="utf-8")
+        self.assertEqual(chunks.load_marked(path), [(1, "Ken Huang", True)])
+
+
+class NameListTest(unittest.TestCase):
+    def test_author_pair_is_not_flagged_as_prose(self):
+        for text in ("Ken Huang and Chris Hughes",
+                     "Ken Huang & Chris Hughes"):
+            self.assertFalse(chunks._looks_translatable(text), text)
+
+    def test_short_title_phrase_is_still_translatable(self):
+        self.assertTrue(chunks._looks_translatable("Research and Development"))
+
+    def test_lowercase_prose_is_still_translatable(self):
+        self.assertTrue(chunks._looks_translatable(
+            "Artificial intelligence and security"))
+
+
 class TranslatableTest(unittest.TestCase):
     def test_names_and_labels_are_not_flagged(self):
         for text in ("Chris Hughes", "DistributedApps.ai, Herndon, VA, USA",

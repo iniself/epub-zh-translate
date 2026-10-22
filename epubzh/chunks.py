@@ -50,10 +50,11 @@ def write_chunks(cfg, name, segs, chunks):
 def load_marked(path):
     """Return [(number, text, verbatim)] from a seg or translation file.
 
-    A `@@@VERBATIM@@@` line as the first line of a segment body marks text the
+    A `@@@VERBATIM@@@` line anywhere inside a segment body marks text the
     translator deliberately kept in the source language (code, commands,
-    listing output). It is checked for placeholders like any other segment but
-    is exempt from the "not translated" and spacing rules.
+    listing output, names, addresses). It is checked for placeholders like any
+    other segment but is exempt from the "not translated" and spacing rules.
+    The marker line itself is not part of the visible text.
     """
     raw = Path(path).read_text(encoding="utf-8")
     parts, cur = [], None
@@ -65,7 +66,7 @@ def load_marked(path):
                 parts.append(cur)
             cur = [int(m.group(1)), [], False]
         elif cur is not None:
-            if not cur[1] and not cur[2] and VERBATIM_RE.match(stripped):
+            if VERBATIM_RE.match(stripped):
                 cur[2] = True
             else:
                 cur[1].append(line)
@@ -417,19 +418,44 @@ def _context(seg, translated, limit=110):
                                           clip(" ".join(translated.split())))
 
 
+NAME_PART_RE = re.compile(
+    r"^[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}$")
+NAME_JOIN_RE = re.compile(r"\s+(?:and|&)\s+", re.IGNORECASE)
+
+
+def _looks_like_name_pair(body):
+    """True for short metadata such as "Ken Huang and Chris Hughes".
+
+    A conjunction alone is not enough: both sides must be capitalized name
+    parts, and at least one side must contain a given name plus a surname.
+    This keeps "Research and Development" translatable while accepting author
+    lists that would otherwise loop between "not translated" and VERBATIM.
+    """
+    text = body.strip().strip(".,;:")
+    parts = NAME_JOIN_RE.split(text)
+    if len(parts) != 2:
+        return False
+    if not all(NAME_PART_RE.fullmatch(part.strip()) for part in parts):
+        return False
+    return any(len(part.split()) >= 2 for part in parts)
+
+
 def _looks_translatable(body):
     """True when a Latin-only segment is prose, not a name/label/address.
 
-    Names ("Chris Hughes"), affiliations ("DistributedApps.ai, Herndon, VA,
-    USA"), labels ("Figure 1.1"), and URLs are not prose. Flagging them as
-    "not translated" makes small models edit them in place, get an identical
-    edit, and loop. Longer all-capitalized runs are still treated as prose.
+    Names ("Chris Hughes"), name pairs ("Ken Huang and Chris Hughes"),
+    affiliations ("DistributedApps.ai, Herndon, VA, USA"), labels
+    ("Figure 1.1"), and URLs are not prose. Flagging them as "not translated"
+    makes small models edit them in place, get an identical edit, and loop.
+    Longer all-capitalized runs are still treated as prose.
     """
     words = body.split()
     if not words or not any(re.search("[A-Za-z]", w) for w in words):
         return False
     if re.fullmatch(r"(?:https?://|www\.|mailto:|doi:\s*)\S+", body,
                     re.IGNORECASE):
+        return False
+    if _looks_like_name_pair(body):
         return False
     if not any(w[:1].islower() for w in words):
         # A short capitalized run, or a comma-separated address, is a proper
