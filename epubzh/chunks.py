@@ -91,7 +91,7 @@ def _ranges(nums):
     return ", ".join(out)
 
 
-def _marker_problems(parts, nseg):
+def _marker_problems(parts, nseg, path=None):
     """Point at duplicated, missing, and out-of-range segment markers."""
     counts = Counter(p[0] for p in parts)
     dup = sorted(n for n, c in counts.items() if c > 1)
@@ -106,12 +106,107 @@ def _marker_problems(parts, nseg):
         bits.append("out of range: %s" % _ranges(extra))
     detail = "; ".join(bits) or "order is wrong"
     if dup:
-        # Show the duplicated body so the extra marker is easy to find.
+        # Show the duplicated body and its line numbers so the extra marker is
+        # easy to delete without reading the whole chunk.
         first = next(p for p in parts if p[0] == dup[0])
         body = " ".join(first[1].split())[:60]
+        where = ""
+        if path is not None:
+            try:
+                lines = [i for i, line in enumerate(
+                    Path(path).read_text(encoding="utf-8").splitlines(), 1)
+                    if (SEG_RE.match(line.strip())
+                        and int(SEG_RE.match(line.strip()).group(1)) == dup[0])]
+                if lines:
+                    where = " at line %s" % ", ".join(str(i) for i in lines)
+            except OSError:
+                pass
         if body:
-            detail += " | seg %d: %s" % (dup[0], body)
+            detail += " | seg %d%s: %s" % (dup[0], where, body)
     return "segment markers != 1..%d (%s)" % (nseg, detail)
+
+
+def _split_blocks(path):
+    """Split a translation file into preamble and per-segment raw blocks.
+
+    Unlike ``load_marked`` this keeps blank lines and original spacing, so a
+    repaired file can be written back without reformatting the translator's
+    output.
+    """
+    raw = Path(path).read_text(encoding="utf-8")
+    preamble, blocks, cur = [], [], None
+    for line in raw.splitlines():
+        m = SEG_RE.match(line.strip())
+        if m:
+            if cur is not None:
+                blocks.append(cur)
+            cur = [int(m.group(1)), [line]]
+        elif cur is None:
+            if line.strip():
+                preamble.append(line)
+        else:
+            cur[1].append(line)
+    if cur is not None:
+        blocks.append(cur)
+    return preamble, blocks
+
+
+def _block_body(lines):
+    """Single-line body text used to compare duplicate segment copies."""
+    body = []
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped and not VERBATIM_RE.match(stripped):
+            body.append(stripped)
+    return " ".join(body)
+
+
+def repair_chunk(path, chunk):
+    """Remove duplicate segment blocks when the right copy is unambiguous.
+
+    Duplicates usually come from a bad edit-append boundary: the last segment
+    is included in both oldString and newString. Every candidate copy is
+    checked against the source placeholders; exactly one valid copy wins, and
+    identical copies collapse to the first. Anything ambiguous is left alone
+    and reported, so this never silently drops a real translation.
+
+    Returns ``(removed, unresolved)`` segment numbers.
+    """
+    path = Path(path)
+    if not path.exists():
+        return [], []
+    preamble, blocks = _split_blocks(path)
+    by_num = {}
+    for idx, (num, _) in enumerate(blocks):
+        by_num.setdefault(num, []).append(idx)
+    drop, removed, unresolved = set(), [], []
+    for num in sorted(n for n, idxs in by_num.items() if len(idxs) > 1):
+        if num < 1 or num > len(chunk):
+            unresolved.append(num)
+            continue
+        seg = chunk[num - 1]
+        cand = by_num[num]
+        bodies = [_block_body(blocks[i][1]) for i in cand]
+        valid = [i for i, body in zip(cand, bodies)
+                 if body and seg.check(body) is None]
+        if len(valid) == 1:
+            keep = valid[0]
+        elif len(set(bodies)) == 1:
+            keep = cand[0]
+        else:
+            unresolved.append(num)
+            continue
+        for i in cand:
+            if i != keep:
+                drop.add(i)
+        removed.append(num)
+    if drop:
+        kept = [block for i, block in enumerate(blocks) if i not in drop]
+        out = list(preamble)
+        for _, lines in kept:
+            out.extend(lines)
+        path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+    return removed, unresolved
 
 
 def parse_translation(path, nseg):
@@ -122,8 +217,12 @@ def parse_translation(path, nseg):
     parts = load_marked(path)
     if not parts:
         return None, None, "no markers found"
-    if [p[0] for p in parts] != list(range(1, nseg + 1)):
-        return None, None, _marker_problems(parts, nseg)
+    nums = [p[0] for p in parts]
+    if nums != list(range(1, nseg + 1)):
+        if nums == list(range(1, len(nums) + 1)) and len(nums) < nseg:
+            return None, None, ("partial: segments 1..%d of %d; append from %d"
+                                % (len(nums), nseg, len(nums) + 1))
+        return None, None, _marker_problems(parts, nseg, path)
     return [p[1] for p in parts], [p[2] for p in parts], None
 
 
@@ -215,16 +314,46 @@ def _clip(text, limit=110):
     return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
-def _context(seg, translated):
-    """Source and target excerpt so a translator can fix the line directly."""
-    return "\n    src: %s\n    got: %s" % (_clip(seg.text), _clip(translated))
+def _context(seg, translated, limit=110):
+    """Source and target excerpt so a translator can fix the line directly.
+
+    Placeholder failures get the full text (``limit=0``): a clipped excerpt
+    hides exactly the marker that must be removed or restored.
+    """
+    clip = (lambda t: t) if not limit else (lambda t: _clip(t, limit))
+    return "\n    src: %s\n    got: %s" % (clip(" ".join(seg.text.split())),
+                                          clip(" ".join(translated.split())))
 
 
-def check_file(cfg, name, only_chunk=None):
+def _looks_translatable(body):
+    """True when a Latin-only segment is prose, not a name/label/address.
+
+    Names ("Chris Hughes"), affiliations ("DistributedApps.ai, Herndon, VA,
+    USA"), labels ("Figure 1.1"), and URLs are not prose. Flagging them as
+    "not translated" makes small models edit them in place, get an identical
+    edit, and loop. Longer all-capitalized runs are still treated as prose.
+    """
+    words = body.split()
+    if not words or not any(re.search("[A-Za-z]", w) for w in words):
+        return False
+    if re.fullmatch(r"(?:https?://|www\.|mailto:|doi:\s*)\S+", body,
+                    re.IGNORECASE):
+        return False
+    if not any(w[:1].islower() for w in words):
+        # A short capitalized run, or a comma-separated address, is a proper
+        # noun rather than an untranslated sentence.
+        return len(words) > 4 and "," not in body
+    return True
+
+
+def check_file(cfg, name, only_chunk=None, fix=True):
     """Check translated chunks of one source file. Returns problems.
 
     ``only_chunk`` restricts validation to a single chunk, so a translator
     working on one chunk does not see "file missing" for its siblings.
+    ``fix`` (default on) first removes duplicate segment blocks produced by a
+    bad append boundary. Ambiguous duplicates are reported instead of guessed
+    at. Pass ``fix=False`` for a read-only check.
     """
     index = read_index(cfg)
     if name not in index:
@@ -252,6 +381,15 @@ def check_file(cfg, name, only_chunk=None):
         targets = list(enumerate(chunks, 1))
     for ci, chunk in targets:
         path = cfg.zh_dir / chunk_name(stem, ci)
+        if fix:
+            removed, unresolved = repair_chunk(path, chunk)
+            if removed:
+                print("  fixed %s chunk %d: removed duplicate seg %s"
+                      % (name, ci, _ranges(removed)))
+            if unresolved:
+                print("  !! %s chunk %d: duplicate seg %s is ambiguous; "
+                      "rewrite this chunk with write"
+                      % (name, ci, _ranges(unresolved)))
         translated, verbatim, err = parse_translation(path, len(chunk))
         if err:
             problems.append("%s chunk %d: %s" % (name, ci, err))
@@ -265,16 +403,18 @@ def check_file(cfg, name, only_chunk=None):
             pos = seg.index + 1 - offset
             bad = seg.check(text)
             if bad:
+                full = "placeholder" in bad or "stray" in bad
                 problems.append("%s chunk %d seg %d/%d: %s%s"
                                 % (name, ci, pos, width, bad,
-                                   _context(seg, text)))
+                                   _context(seg, text, 0 if full else 110)))
                 continue
             if keep:
                 continue
             body = markup.strip_placeholders(text).strip()
             short = len(body) <= 3 and " " not in body
             if cfg.require_latin and re.search("[A-Za-z]", seg.text) \
-                    and not CJK_RE.search(body) and not short:
+                    and not CJK_RE.search(body) and not short \
+                    and _looks_translatable(body):
                 problems.append("%s chunk %d seg %d/%d: not translated%s"
                                 % (name, ci, pos, width,
                                    _context(seg, text)))

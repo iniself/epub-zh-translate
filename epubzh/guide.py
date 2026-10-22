@@ -250,23 +250,22 @@ def _contract(cfg, stem, chunk, dst):
 
 1. 你的第一条动作必须是写输出文件；不要复述任务、不要解释思路、不要输出
    「我将翻译」「Actually, I'll ...」这类句子。
-2. 一次写完整个分块。如果预计输出会超长，先 `write` 前 20–30 段，再用
-   `edit` 追加；禁止从头重写。追加时 oldString 必须是文件里唯一的一段（通常
-   是最后一段），且必须与 newString 不同：
-
-   oldString：`@@@SEG 030@@@` 加第 30 段译文
-   newString：oldString 加换行，再加 `@@@SEG 031@@@` 和第 31 段译文
-
-   `edit` 连续 2 次无法应用（报告 identical、找不到 oldString 或多处匹配）时，
-   停止修补，直接 `write` 覆盖整个分块。每次追加后立刻重跑第 3 步的自检，
-   确认段号从 1 连续排到最后一段，再继续追加。
-3. 写完先运行一次自检：
-   `%s check --config %s %s --chunk %d`
-4. 自检只报其他分块的 `file missing` 时忽略并结束。报错会附带 `src:` 和 `got:`
-   两行，照着改对应的那一段即可，不要通读整块。报 `segment markers` 时会点名
-   重复或缺失的段号：删掉多余的 `@@@SEG nnn@@@`，或补齐缺的那一段，不要重写
-   整块。改完再跑一次。
-5. 同一分块连续 3 次自检不过就停下来报告问题，不要继续重试。
+2. 优先一次 `write` 写完整个分块，不要习惯性边写边追加。只有 `write` 明显
+   被截断时才追加；追加前先 `read` 文件末尾，确认最后一段编号 n：
+   - oldString 只取最后一段（`@@@SEG nnn@@@` + 该段译文），不要带上倒数第二段。
+   - newString = oldString + 换行 + 新段，绝对不要在 newString 里重复最后一段。
+   - `edit` 返回 identical / 找不到 oldString / 多处匹配时，不要重试，直接
+     `write` 覆盖整个分块。
+3. 写完运行自检（`--fix` 会自动删除重复段）：
+   `%s check --config %s %s --chunk %d --fix`
+4. 自检报错按类型处理，不要通读整块：
+   - `segment markers`：`--fix` 后仍报，按报错里的 `at line ...` 删掉重复段；
+     报 missing 就补齐缺的段；仍不确定就用 `write` 重写整块。
+   - `placeholder mismatch` / `stray placeholder` / `not translated` /
+     `missing space`：只改报错的那一段。`edit` 的 oldString 必须是该段当前
+     完整文本（标记行 + 译文），newString 是修正后的同一段。
+   - `file missing`：只报其他分块时忽略并结束。
+5. 同一分块最多 3 轮自检；仍不过就只回复一行 `失败：<原因>` 并结束。
 6. 完成后只回复一行：`已写入 %s`
 """ % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk, dst)
 
@@ -441,5 +440,5 @@ def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False):
         print("wrote %s" % path)
     print("→ 交给一个 subagent 执行（一个分块一个 subagent），"
           "不要在主会话里直接翻译")
-    print("→ 自检：%s check --config %s %s --chunk %d"
+    print("→ 自检：%s check --config %s %s --chunk %d --fix"
           % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk))

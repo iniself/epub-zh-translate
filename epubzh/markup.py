@@ -306,7 +306,18 @@ class Segment(object):
                     remaining.remove(w)
                 else:
                     missing.append(w)
-            return "placeholder mismatch: missing=%s extra=%s" % (missing, remaining)
+            hint = ""
+            singles = {it["open"] for it in self.items
+                       if it["kind"] == "single"}
+            for marker in remaining:
+                m = PH_RE.fullmatch(marker)
+                if (m and m.group(1).startswith("/")
+                        and placeholder(int(m.group(1)[1:])) in singles):
+                    hint = (" (%s is a single marker; remove the extra %s)"
+                            % (placeholder(int(m.group(1)[1:])), marker))
+                    break
+            return "placeholder mismatch: missing=%s extra=%s%s" % (
+                missing, remaining, hint)
         if has_stray_brackets(translated):
             return "stray placeholder bracket"
         for it in self.items:

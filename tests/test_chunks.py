@@ -1,0 +1,103 @@
+"""Regression tests for the chunk repair and untranslated-text heuristics."""
+import tempfile
+import unittest
+from pathlib import Path
+
+from epubzh import chunks, markup
+
+
+def make_seg(pairs=(), singles=()):
+    items = [{"kind": "pair", "open": "\u27e6%d\u27e7" % n,
+              "close": "\u27e6/%d\u27e7" % n} for n in pairs]
+    items += [{"kind": "single", "open": "\u27e6%d\u27e7" % n}
+              for n in singles]
+    return markup.Segment(0, 0, "", items)
+
+
+def block(num, text):
+    return "@@@SEG %03d@@@\n%s" % (num, text)
+
+
+class RepairChunkTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.chunk = [make_seg(pairs=(0,)), make_seg(pairs=(0,))]
+
+    def write(self, text):
+        path = self.tmp / "chunk.txt"
+        path.write_text(text + "\n", encoding="utf-8")
+        return path
+
+    def test_identical_duplicates_collapse_to_first(self):
+        path = self.write(block(1, "\u7532") + "\n" + block(1, "\u7532")
+                          + "\n" + block(2, "\u27e60\u27e7\u4e59\u27e6/0\u27e7"))
+        removed, unresolved = chunks.repair_chunk(path, self.chunk)
+        self.assertEqual(removed, [1])
+        self.assertEqual(unresolved, [])
+        self.assertEqual(path.read_text(encoding="utf-8").count("@@@SEG 001@@@"), 1)
+
+    def test_keeps_the_only_valid_copy(self):
+        path = self.write(block(1, "\u27e60\u27e7\u7532\u27e7")
+                          + "\n" + block(1, "\u27e60\u27e7\u7532\u27e6/0\u27e7")
+                          + "\n" + block(2, "\u27e60\u27e7\u4e59\u27e6/0\u27e7"))
+        removed, unresolved = chunks.repair_chunk(path, self.chunk)
+        self.assertEqual(removed, [1])
+        self.assertEqual(unresolved, [])
+        body = path.read_text(encoding="utf-8")
+        self.assertIn("\u27e60\u27e7\u7532\u27e6/0\u27e7", body)
+        self.assertNotIn("\u27e60\u27e7\u7532\u27e7", body)
+
+    def test_ambiguous_duplicates_are_left_alone(self):
+        path = self.write(block(1, "\u27e60\u27e7\u7532\u27e7")
+                          + "\n" + block(1, "\u27e61\u27e7\u4e59\u27e6/1\u27e7")
+                          + "\n" + block(2, "\u27e60\u27e7\u4e19\u27e6/0\u27e7"))
+        before = path.read_text(encoding="utf-8")
+        removed, unresolved = chunks.repair_chunk(path, self.chunk)
+        self.assertEqual(removed, [])
+        self.assertEqual(unresolved, [1])
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+
+class TranslatableTest(unittest.TestCase):
+    def test_names_and_labels_are_not_flagged(self):
+        for text in ("Chris Hughes", "DistributedApps.ai, Herndon, VA, USA",
+                     "Figure 1.1", "Email:", "LLM",
+                     "https://doi.org/10.1007/978-3-032-02130-4_1"):
+            self.assertFalse(chunks._looks_translatable(text), text)
+
+    def test_prose_is_flagged(self):
+        for text in ("This is a complete sentence",
+                     "Agentic AI uses tools",
+                     "AI Agents Are Transforming Security",
+                     "Artificial intelligence is transforming security"):
+            self.assertTrue(chunks._looks_translatable(text), text)
+
+
+class MarkerDiagnosticsTest(unittest.TestCase):
+    def test_duplicate_reports_line_numbers(self):
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text(block(1, "\u7532") + "\n" + block(2, "\u4e59")
+                        + "\n" + block(2, "\u4e59") + "\n"
+                        + block(3, "\u4e19") + "\n", encoding="utf-8")
+        error = chunks.parse_translation(path, 3)[2]
+        self.assertIn("duplicated: 2", error)
+        self.assertIn("at line 3, 5", error)
+
+    def test_partial_explains_where_to_append(self):
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text(block(1, "\u7532") + "\n" + block(2, "\u4e59")
+                        + "\n", encoding="utf-8")
+        error = chunks.parse_translation(path, 4)[2]
+        self.assertIn("partial: segments 1..2 of 4", error)
+        self.assertIn("append from 3", error)
+
+
+class PlaceholderHintTest(unittest.TestCase):
+    def test_extra_close_for_single_marker_gets_hint(self):
+        seg = make_seg(singles=(0,))
+        bad = seg.check("\u27e60\u27e7\u7532\u27e6/0\u27e7")
+        self.assertIn("is a single marker", bad)
+
+
+if __name__ == "__main__":
+    unittest.main()

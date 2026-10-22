@@ -211,7 +211,8 @@ def cmd_check(args):
                          % len(names))
     all_problems = []
     for name in names:
-        problems = chunks.check_file(cfg, name, only_chunk=args.chunk)
+        problems = chunks.check_file(cfg, name, only_chunk=args.chunk,
+                                     fix=args.fix)
         all_problems.extend(problems)
         mark = "OK" if not problems else "%d problem(s)" % len(problems)
         if args.chunk:
@@ -323,6 +324,10 @@ def build_parser():
     p = sub.add_parser("check", help="validate translated chunks")
     p.add_argument("only", nargs="?", help="only files whose name contains this string")
     p.add_argument("--chunk", type=int, help="validate a single chunk only")
+    p.add_argument("--fix", dest="fix", action="store_true", default=True,
+                   help="drop duplicate segment blocks (default)")
+    p.add_argument("--no-fix", dest="fix", action="store_false",
+                   help="read-only check, do not repair duplicates")
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("terms-audit",

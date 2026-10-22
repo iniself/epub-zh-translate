@@ -111,7 +111,7 @@ work：/path/to/books/mybook-zh-project/work
 1. 如果项目目录没有 `book.toml`：先 `init` + `extract`，确认所有文件 round-trip 通过后再开始翻译。
    如果已有 `book.toml`：先运行 `status` + `check`，确认是续跑还是新项目；不要覆盖已有译文。
 2. 阅读目录、前言和前两章，完善 `work/terms.tsv`，然后运行 `guide`；它会生成 `work/TRANSLATION_GUIDE.md`。
-3. 正文按分块翻译，流程见下面的“分块翻译”；每个分块写完后用 `check --chunk` 自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译、中英文空格）。
+3. 正文按分块翻译，流程见下面的“分块翻译”；每个分块写完后用 `check --chunk --fix` 自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译、中英文空格）。
 4. 全部完成后运行 `build` 和 `verify`；XML、内部链接、锚点、占位符必须零错误。构建前运行一次
    `terms-audit`，检查术语一致性（默认只报告，不阻断）。
 5. 不要修改源 EPUB；不要手工改 `work/build` 里的文件，所有修改通过 `work/zh/`、`work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 完成。
@@ -132,8 +132,8 @@ TOOL="<skill-base>/epubzh-run"
 # 3. 把提示词文件路径交给一个 subagent，让它读文件并执行
 #    一个分块一个 subagent；不要复制粘贴提示词正文
 
-# 4. 只校验这一块
-"$TOOL" check --config book.toml <stem> --chunk <n>
+# 4. 只校验这一块（--fix 自动删除重复段块）
+"$TOOL" check --config book.toml <stem> --chunk <n> --fix
 ```
 
 硬规则：
@@ -144,14 +144,18 @@ TOOL="<skill-base>/epubzh-run"
 - 子代理如果反复说“我将翻译”“Actually, I'll just translate it”却不动手，说明它没有按
   提示词执行：重发一句“读 `<prompt 文件>`，按执行契约直接写文件，不要回复计划”，
   不要追加解释，也不要换一种说法反复劝。
-- 同一分块连续 3 次 `check --chunk` 不过，停下来报告用户，不要继续重试。
-- `check --chunk` 的报错会带 `src:` 和 `got:` 两行。段号写成 `seg 8/40`，对应
-  文件里的 `@@@SEG 008@@@`，按这一段的 `src:`/`got:` 只改那一行，不要通读整块。
-  报 `segment markers` 时会点名重复或缺失的段号，删掉多余的标记或补齐缺失段即可，
-  不要整块重写。追加内容用 `edit` 时，oldString 必须唯一且与 newString 不同；
-  `edit` 连续 2 次无法应用就直接 `write` 覆盖整个分块。
+- 同一分块连续 3 次 `check --chunk --fix` 不过，停下来报告用户，不要继续重试。
+- `check --chunk --fix` 会先做确定性的修复：重复段块中只有一份占位符正确时保留
+  那一份，多份内容完全相同时保留第一份；无法判断时不动文件并提示整块重写。
+- `check --chunk` 的报错会带 `src:` 和 `got:` 两行；占位符类错误给全文，不截断。
+  段号写成 `seg 8/40`，对应文件里的 `@@@SEG 008@@@`，按这一段只改那一行，不要
+  通读整块。报 `segment markers` 时会点名重复/缺失段号和重复段所在行号。
+- 子代理执行契约要求**优先一次 `write` 写完**整个分块，只有写被截断才追加。追加
+  时 oldString 只取最后一段，newString 不得重复最后一段——重复段几乎都来自这个
+  边界写错。`edit` 返回 identical/找不到/多处匹配时不得重试，直接 `write` 重写整块。
 - `status` 里的 `Np` 是 partial：重新 `prompt` 会给出“从第 N+1 段续写”的指令，
-  只追加、不要整块重写。`Nb` 是 broken（段号不连续）：按提示词整体重写该块。
+  只追加、不要整块重写。`Nb` 是 broken（段号不连续）：先运行
+  `check <stem> --chunk <n> --fix`，能修好就继续；仍 broken 再整体重写该块。
 - 同一章所有分块完成后，再跑一次整章 `check <stem>` 要求清零；此时剩下的才是真问题，
   不会再有“别的分块缺失”。
 - 第一章定稿后写 `work/style.md`（10–15 组英中例句 + 硬决定：人称、术语首次出现格式、
@@ -183,7 +187,7 @@ TOOL="<skill-base>/epubzh-run"
 - 风格：通俗易懂、技术准确，像资深工程师给同事讲课；保留原文的例子、类比和幽默感。
 - 人称：you → 你；we → 我们。
 - 术语：首次出现写“中文（English）”，之后统一用中文；以 `work/terms.tsv` 为准。
-- 人名/地名：音译，首次出现附原文；产品名、公司名、协议名保留英文。
+- 人名/地名：正文中音译，首次出现附原文；作者、机构、地址等元数据可保留英文原名；产品名、公司名、协议名保留英文。
 - 术语表没有的译法，先补进 `work/terms.tsv` 再继续。
 - `terms.tsv` 用三列：`English`、`规范中文`、`备注或禁用变体`（可留空）。第二列只写译名，
   不要把“首次出现写……”这类说明写进去；说明放第三列，或写进 `work/decisions.md`。

@@ -145,3 +145,14 @@ Building on the content summarization techniques from chapter 3, this chapter gu
 4. 中英文之间是否都加了空格。
 5. 是否误把 `###` 说明行写进输出。
 6. 运行项目自检命令，确认没有占位符、空格和未翻译问题。
+
+## 九、自检不通过时
+
+- 用 `check --chunk N --fix` 自检；`--fix` 会自动删除明确可判定的重复段块。
+- 报 `segment markers`：按报错里的 `at line ...` 删掉重复段，或补齐缺失段。
+- 报 `placeholder mismatch` / `stray placeholder` / `not translated` /
+  `missing space`：只改报错的那一段，不要通读或重写整块。占位符类错误会给出
+  完整原文和译文，单标记后面多出来的闭合标记要删掉。
+- `edit` 返回 identical、找不到 oldString 或多处匹配：不要重试，直接 `write`
+  覆盖整个分块。
+- 同一分块最多 3 轮自检；仍不过就回复一行失败原因并结束。
