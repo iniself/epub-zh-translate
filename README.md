@@ -39,6 +39,15 @@ git clone https://github.com/iniself/epub-zh-translate.git \
   <project>/.opencode/skills/epub-zh-translate
 ```
 
+A project-local install behaves exactly like a global one. The book project
+(`book.toml`, `work/`, and so on) is still created at the location you pass via
+`--base` or as an absolute path; nothing is written into the skill directory.
+
+- Keep the directory name `epub-zh-translate`; renaming it breaks
+  `@epub-zh-translate`.
+- If the same skill exists globally and in the project, the project copy wins.
+- OpenCode finds it when started from the project root or any subdirectory.
+
 ### Manual installation
 
 Download the repository as a ZIP, extract it, and place the folder so that this
@@ -51,8 +60,11 @@ file exists:
 Make the launcher executable if your archive tool did not preserve permissions:
 
 ```bash
-chmod +x ~/.config/opencode/skills/epub-zh-translate/epubzh-run
+chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 ```
+
+`<skills-dir>` is the actual install location: `~/.config/opencode/skills` for a
+global install, or `<project>/.opencode/skills` for a project-local install.
 
 Start a new OpenCode session after installation.
 
@@ -222,7 +234,7 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
 For manual diagnosis only:
 
 ```bash
-TOOL=~/.config/opencode/skills/epub-zh-translate/epubzh-run
+TOOL=<skills-dir>/epub-zh-translate/epubzh-run
 "$TOOL" next --config /path/to/project/book.toml
 "$TOOL" next --resume --config /path/to/project/book.toml
 "$TOOL" status --config /path/to/project/book.toml

@@ -88,6 +88,13 @@ git clone https://github.com/iniself/epub-zh-translate.git \
   <project>/.opencode/skills/epub-zh-translate
 ```
 
+项目内安装和全局安装的功能完全一致。翻译项目（`book.toml`、`work/` 等）仍然
+按 `--base` 或绝对路径落在你指定的位置，不会写进 skill 目录。
+
+- 目录名必须保持 `epub-zh-translate`；改名后 `@epub-zh-translate` 会失效。
+- 全局和项目里装了同一个 skill 时，项目内那份优先。
+- 在项目根目录或它的子目录启动 OpenCode 都能发现该 skill。
+
 ### 手动安装
 
 下载仓库 ZIP 并解压，确保最终路径是：
@@ -99,8 +106,11 @@ git clone https://github.com/iniself/epub-zh-translate.git \
 如果解压工具没有保留可执行权限，补上：
 
 ```bash
-chmod +x ~/.config/opencode/skills/epub-zh-translate/epubzh-run
+chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 ```
+
+`<skills-dir>` 是实际安装位置：全局为 `~/.config/opencode/skills`，项目内为
+`<project>/.opencode/skills`。
 
 安装完成后重新打开一个 OpenCode 会话。
 
@@ -206,7 +216,7 @@ chmod +x ~/.config/opencode/skills/epub-zh-translate/epubzh-run
 仅供排查时手动运行：
 
 ```bash
-TOOL=~/.config/opencode/skills/epub-zh-translate/epubzh-run
+TOOL=<skills-dir>/epub-zh-translate/epubzh-run
 "$TOOL" next --config /path/to/project/book.toml
 "$TOOL" next --resume --config /path/to/project/book.toml
 "$TOOL" status --config /path/to/project/book.toml
