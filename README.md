@@ -203,7 +203,8 @@ starting a new project.
 ## What the agent does
 
 1. Creates the project configuration, unpacks the source EPUB, and seeds a glossary.
-2. Reads the table of contents, preface, and first chapters to refine the glossary.
+2. Reads the table of contents, preface, and first chapters to refine the
+   glossary; missing ones are skipped, never fabricated.
 3. Generates `work/TRANSLATION_GUIDE.md`.
 4. Generates one prompt per chunk under `work/prompts/` and hands each chunk to a
    subagent, one chunk per subagent.

@@ -186,7 +186,7 @@ chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 ## agent 会做什么
 
 1. 创建项目配置、解包源 EPUB、生成术语表种子。
-2. 阅读目录、前言和前两章，完善术语表。
+2. 阅读目录、前言和前两章（实际没有就跳过，不手工创建目录），完善术语表。
 3. 生成 `work/TRANSLATION_GUIDE.md`。
 4. 按分块生成提示词，每个分块交给一个 subagent 翻译。
 5. 逐块、逐章检查，审计术语，然后构建并校验最终 EPUB。
