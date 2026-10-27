@@ -2,7 +2,6 @@
 """Command line interface for the epubzh pipeline."""
 import argparse
 import os
-import shlex
 import sys
 from pathlib import Path
 
@@ -102,14 +101,22 @@ def cmd_init(args):
                 cfg = config.load(cfg_path)
                 print("layout  = %s (%s)" % (text_dir, ", ".join(extensions)))
     wrapper = Path(__file__).resolve().parent.parent / "epubzh-run"
-    tool = str(wrapper) if wrapper.exists() else "python3 -m epubzh"
+    if os.name == "nt":
+        wrapper = wrapper.with_name(wrapper.name + ".cmd")
+    if wrapper.exists():
+        tool = str(wrapper)
+        if os.name == "nt":
+            tool = "& %s" % guide.quote_path(wrapper)
+    else:
+        tool = guide._module_cmd(cfg) if os.name == "nt" else "python3 -m epubzh"
     print("\ncreated %s (profile: %s, %d words per chunk%s)"
           % (cfg_path, profile, cfg.words_per_chunk,
              ", max %d segments" % cfg.max_segments_per_chunk
              if cfg.max_segments_per_chunk else ", no segment cap"))
+    config_hint = guide.quote_path(cfg_path) if os.name == "nt" else str(cfg_path)
     print("next:")
-    print("  %s extract --config %s" % (tool, cfg_path))
-    print("  %s guide   --config %s" % (tool, cfg_path))
+    print("  %s extract --config %s" % (tool, config_hint))
+    print("  %s guide   --config %s" % (tool, config_hint))
     print("  edit %s" % cfg.terms_tsv)
 
 
@@ -261,7 +268,7 @@ def cmd_next(args):
     print("action: read the prompt and execute only this chunk; "
           "do not run a project-wide check")
     print("check: %s check --config %s %s --chunk %d --fix"
-          % (guide._module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk))
+          % (guide._module_cmd(cfg), guide.quote_path(cfg.path), stem, chunk))
     return 0
 
 

@@ -16,7 +16,7 @@ The skill drives a local, dependency-free pipeline (`epubzh`) that:
 
 - Python 3.11 or newer (standard library only)
 - OpenCode
-- macOS or Linux. On Windows, use WSL.
+- macOS, Linux, or Windows 10/11 (WSL or native PowerShell)
 
 No `pip`, `npm`, or other packages are required.
 
@@ -79,6 +79,14 @@ npx skills add iniself/epub-zh-translate -a opencode -g
   `.agents/skills/` and links it into OpenCode; choose Copy to keep a single
   copy.
 - Invoke it with `@epub-zh-translate` as usual.
+- This method needs Node.js, but only for installation; running the skill still
+  requires Python only.
+
+### Windows installation
+
+Windows does not require WSL. Install with `git clone` or `npx skills add` as
+above; no `chmod` is needed. `epubzh-run.cmd` sets `PYTHONPATH` itself, uses
+`python` when available and falls back to `py -3`, and checks for Python 3.11+.
 
 ### Manual installation
 
@@ -97,6 +105,7 @@ chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 
 `<skills-dir>` is the actual install location: `~/.config/opencode/skills` for a
 global install, or `<project>/.opencode/skills` for a project-local install.
+Windows does not need this step; use `epubzh-run.cmd` directly.
 
 Start a new OpenCode session after installation.
 
@@ -172,7 +181,8 @@ Additional rules:
 - There is no need to `cd` into the project directory before running commands.
 
 You do not need to run any command-line tool. The agent runs `init`, `extract`,
-`guide`, `check`, `build`, and `verify` internally.
+`guide`, `check`, `build`, and `verify` internally. On Windows the invocation is
+identical: the agent uses `epubzh-run.cmd`, with no WSL required.
 
 In this guide, "project root" means the book project directory containing
 `book.toml`, not the skill directory.
@@ -236,8 +246,10 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
 - **The skill does not appear**: confirm that
   `.../skills/epub-zh-translate/SKILL.md` exists, keep the directory name, and
   restart OpenCode.
-- **The tool cannot be found**: check that Python 3.11+ is available, that
-  `epubzh-run` is executable, and that the skill directory was not moved.
+- **The tool cannot be found**: check that Python 3.11+ is available and that
+  `epubzh-run` exists (or `epubzh-run.cmd` on Windows). On macOS and Linux also
+  check that `epubzh-run` is executable, and that the skill directory was not
+  moved.
 - **`check` reports problems**: fix the reported chunk under `work/zh/`; do not
   edit `work/build`. For a subagent, use `check <stem> --chunk <n>` so it only
   sees its own chunk. `check` repairs duplicate blocks, drops out-of-range
@@ -266,7 +278,12 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
 For manual diagnosis only:
 
 ```bash
+# macOS / Linux
 TOOL=<skills-dir>/epub-zh-translate/epubzh-run
+
+# Windows PowerShell
+# $TOOL = "<skills-dir>\epub-zh-translate\epubzh-run.cmd"
+# Invoke it with & $TOOL, for example: & $TOOL next --config ...
 "$TOOL" next --config /path/to/project/book.toml
 "$TOOL" next --resume --config /path/to/project/book.toml
 "$TOOL" status --config /path/to/project/book.toml
@@ -283,7 +300,8 @@ epub-zh-translate/
 ├── LICENSE               # MIT
 ├── .gitignore
 ├── book.toml.example     # Project configuration template
-├── epubzh-run            # Launcher
+├── epubzh-run            # macOS / Linux launcher
+├── epubzh-run.cmd        # Windows launcher
 └── epubzh/               # Python package (standard library only)
     ├── ...
     └── defaults/

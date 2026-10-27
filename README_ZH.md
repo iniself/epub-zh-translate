@@ -65,7 +65,7 @@ prompt 里只写文件名。**
 
 - Python 3.11 或更高版本（只用标准库）
 - OpenCode
-- macOS 或 Linux；Windows 建议使用 WSL
+- macOS、Linux，或 Windows 10/11（WSL 或原生 PowerShell 均可）
 
 不需要安装 `pip`、`npm` 或其他第三方包。
 
@@ -122,6 +122,13 @@ npx skills add iniself/epub-zh-translate -a opencode -g
 - 交互式安装会询问 Symlink 还是 Copy：Symlink 会在 `.agents/skills/` 保留一份
   并软链到 OpenCode；只想保留一份拷贝时选 Copy。
 - 安装后同样用 `@epub-zh-translate` 调用。
+- 这种方式需要 Node.js，但只在安装时用到；运行 skill 仍然只需要 Python。
+
+### Windows 原生安装
+
+Windows 不需要 WSL。用上面的 `git clone` 或 `npx skills add` 安装即可，
+不需要 `chmod`。`epubzh-run.cmd` 会自己处理 `PYTHONPATH`：优先用 `python`，
+没有时回退到 `py -3`，并检查版本是否 3.11 以上。
 
 ### 手动安装
 
@@ -138,7 +145,7 @@ chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 ```
 
 `<skills-dir>` 是实际安装位置：全局为 `~/.config/opencode/skills`，项目内为
-`<project>/.opencode/skills`。
+`<project>/.opencode/skills`。Windows 不需要这一步，直接使用 `epubzh-run.cmd`。
 
 安装完成后重新打开一个 OpenCode 会话。
 
@@ -160,7 +167,8 @@ chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 `项目目录` 可选；不填时会按输出文件推导。agent 会先复述参数，得到确认后再开始。
 
 你不需要手动运行任何命令行工具。agent 会在内部执行 `init`、`extract`、
-`guide`、`check`、`build` 和 `verify`。
+`guide`、`check`、`build` 和 `verify`。Windows 下调用方式完全相同，agent 会
+自动使用 `epubzh-run.cmd`，不需要 WSL。
 
 本文中的“项目根目录”指包含 `book.toml` 的书籍项目目录，不是 skill 目录。
 
@@ -217,8 +225,9 @@ chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 - **skill 没有出现**：确认
   `.../skills/epub-zh-translate/SKILL.md` 存在，目录名没有被改，然后重启
   OpenCode。
-- **找不到工具**：检查 Python 3.11+、`epubzh-run` 的可执行权限，以及 skill
-  目录是否被移动。
+- **找不到工具**：检查 Python 3.11+，确认 `epubzh-run`（Windows 为
+  `epubzh-run.cmd`）；macOS / Linux 还要检查 `epubzh-run` 的可执行权限，
+  以及 skill 目录是否被移动。
 - **`check` 报错**：修改 `work/zh/` 中对应的分块；不要修改 `work/build`。
   子代理自检请用 `check <章名> --chunk <n>`，整章检查只会报“其他分块缺失”。
   `check` 默认会自动修复重复段、越界段、乱序，以及单独占位符 `⟦n⟧` 后面多出来的
@@ -244,7 +253,12 @@ chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 仅供排查时手动运行：
 
 ```bash
+# macOS / Linux
 TOOL=<skills-dir>/epub-zh-translate/epubzh-run
+
+# Windows PowerShell
+# $TOOL = "<skills-dir>\epub-zh-translate\epubzh-run.cmd"
+# 调用时用 & $TOOL，例如：& $TOOL next --config ...
 "$TOOL" next --config /path/to/project/book.toml
 "$TOOL" next --resume --config /path/to/project/book.toml
 "$TOOL" status --config /path/to/project/book.toml
@@ -261,7 +275,8 @@ epub-zh-translate/
 ├── LICENSE               # MIT
 ├── .gitignore
 ├── book.toml.example     # 项目配置模板
-├── epubzh-run            # 启动器
+├── epubzh-run            # macOS / Linux 启动器
+├── epubzh-run.cmd        # Windows 启动器
 └── epubzh/               # Python 包（只用标准库）
     ├── ...
     └── defaults/

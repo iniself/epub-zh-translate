@@ -125,7 +125,10 @@ work：/path/to/books/mybook-zh-project/work
 每个分块 = 一个 subagent = 一次 `write`。主会话只做调度和校验，**不要在主会话里直接翻译整块**。
 
 ```bash
+# macOS / Linux
 TOOL="<skill-base>/epubzh-run"
+# Windows PowerShell: $TOOL = "<skill-base>\epubzh-run.cmd"
+# Windows 上调用写成 & $TOOL，不要写 "$TOOL"
 
 # 1. 选择下一块（默认按阅读顺序；一次只给一块）
 "$TOOL" next --config book.toml
@@ -265,10 +268,13 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 ## 八、工具调用契约
 
-工具入口是包含本 `SKILL.md` 的目录下的 `epubzh-run`。skill 加载时会给出
-基础目录（Base directory）；优先用这个基础目录拼接。拿不到基础目录时，
-工具就在 `SKILL.md` 所在目录。不要假设书籍项目根目录（`book.toml`
-所在目录）里有 `./epubzh-run`。
+工具入口是包含本 `SKILL.md` 的目录下的 `epubzh-run`；Windows 上是
+`epubzh-run.cmd`。skill 加载时会给出基础目录（Base directory）；优先用这个
+基础目录拼接。拿不到基础目录时，工具就在 `SKILL.md` 所在目录。不要假设书籍
+项目根目录（`book.toml` 所在目录）里有 `./epubzh-run`。
+
+macOS / Linux 用 `"$TOOL"` 调用；Windows PowerShell 用 `& $TOOL` 调用，
+不要写 `"$TOOL"`。下面的命令以 macOS / Linux 为例。
 
 不要 `cd` 到项目目录，也不要在命令里使用依赖当前目录的相对配置。所有命令都用
 绝对 `--config`，并在 `init` 时用 `--base` 明确会话目录。项目目录按输出文件
@@ -276,6 +282,8 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 ```bash
 TOOL="<skill-base>/epubzh-run"
+# Windows PowerShell: $TOOL = "<skill-base>\epubzh-run.cmd"
+# Windows 直接拼绝对路径，不要照抄下面的 case/dirname 写法。
 SESSION="/path/to/books"      # 用户启动 opencode 的目录
 SOURCE="mybook.epub"          # 在会话目录时只写文件名
 OUTPUT="mybook-zh.epub"       # 在会话目录时只写文件名

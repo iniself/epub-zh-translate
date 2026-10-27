@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Translation guide rendering and per-chunk subagent prompts."""
 import csv
+import os
 import re
 import shlex
 import xml.etree.ElementTree as ET
@@ -60,8 +61,25 @@ def render_guide(cfg):
     print("wrote %s (%d terms)" % (cfg.guide_file, len(terms)))
 
 
+def _ps_quote(value):
+    """Quote a value for PowerShell, where single quotes are doubled."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def quote_path(value):
+    """Quote a path for the command syntax of the current platform."""
+    if os.name == "nt":
+        return _ps_quote(value)
+    return shlex.quote(str(value))
+
+
 def _module_cmd(cfg):
     package_root = Path(__file__).resolve().parent.parent
+    if os.name == "nt":
+        wrapper = package_root / "epubzh-run.cmd"
+        if wrapper.exists():
+            return "& %s" % _ps_quote(wrapper)
+        return "$env:PYTHONPATH = %s; python -m epubzh" % _ps_quote(package_root)
     return "PYTHONPATH=%s python3 -m epubzh" % shlex.quote(str(package_root))
 
 
@@ -247,7 +265,7 @@ def _rulecard():
 
 def _contract(cfg, stem, chunk, dst, state, last, nseg):
     check_cmd = "%s check --config %s %s --chunk %d --fix" % (
-        _module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk)
+        _module_cmd(cfg), quote_path(cfg.path), stem, chunk)
 
     if state == "repair":
         first = (
@@ -560,7 +578,7 @@ def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False,
         print("→ 交给一个 subagent 执行（一个分块一个 subagent），"
               "不要在主会话里直接翻译")
         print("→ 自检：%s check --config %s %s --chunk %d --fix"
-              % (_module_cmd(cfg), shlex.quote(str(cfg.path)), stem, chunk))
+              % (_module_cmd(cfg), quote_path(cfg.path), stem, chunk))
     return path
 
 
