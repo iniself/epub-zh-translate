@@ -69,6 +69,15 @@ prompt 里只写文件名。**
 
 不需要安装 `pip`、`npm` 或其他第三方包。
 
+## 源语言支持
+
+目标语言固定为简体中文。源书目前必须是使用拉丁字母、以空格分词的语言，
+例如英语、法语、德语、西班牙语、意大利语、葡萄牙语。
+
+暂不支持无空格语言（日语、韩语、泰语）和非拉丁字母语言（俄语、希腊语、
+阿拉伯语、希伯来语）：流水线按拉丁字母判断可翻译段落、按空格计算分块大小，
+这些书会漏段或分块异常。
+
 ## 安装
 
 仓库根目录就是 skill 目录。OpenCode 根据目录名生成 skill ID
@@ -94,6 +103,25 @@ git clone https://github.com/iniself/epub-zh-translate.git \
 - 目录名必须保持 `epub-zh-translate`；改名后 `@epub-zh-translate` 会失效。
 - 全局和项目里装了同一个 skill 时，项目内那份优先。
 - 在项目根目录或它的子目录启动 OpenCode 都能发现该 skill。
+
+### 用 skills CLI 安装（可选）
+
+也可以用第三方 `skills` CLI 安装，效果和 `git clone` 相同：
+
+```bash
+# 项目内（默认）
+npx skills add iniself/epub-zh-translate -a opencode
+
+# 全局
+npx skills add iniself/epub-zh-translate -a opencode -g
+```
+
+- 不加 `-g` 时安装到当前项目的 `.opencode/skills/`；`-g` 安装到
+  `~/.config/opencode/skills/`。
+- 安装目录名取自 `SKILL.md` 的 `name`（`epub-zh-translate`）。
+- 交互式安装会询问 Symlink 还是 Copy：Symlink 会在 `.agents/skills/` 保留一份
+  并软链到 OpenCode；只想保留一份拷贝时选 Copy。
+- 安装后同样用 `@epub-zh-translate` 调用。
 
 ### 手动安装
 

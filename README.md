@@ -20,6 +20,17 @@ The skill drives a local, dependency-free pipeline (`epubzh`) that:
 
 No `pip`, `npm`, or other packages are required.
 
+## Source languages
+
+The target language is always Simplified Chinese. The source book must use a
+Latin-script language with space-separated words, such as English, French,
+German, Spanish, Italian, or Portuguese.
+
+Languages without spaces (Japanese, Korean, Thai) and non-Latin scripts
+(Russian, Greek, Arabic, Hebrew) are not supported yet: the pipeline detects
+translatable paragraphs by Latin letters and sizes chunks by whitespace, so
+those books would be skipped or chunked incorrectly.
+
 ## Installation
 
 The repository root is the skill directory. OpenCode derives the skill ID from
@@ -47,6 +58,27 @@ A project-local install behaves exactly like a global one. The book project
   `@epub-zh-translate`.
 - If the same skill exists globally and in the project, the project copy wins.
 - OpenCode finds it when started from the project root or any subdirectory.
+
+### Install with the skills CLI (optional)
+
+The third-party `skills` CLI works too and produces the same result as
+`git clone`:
+
+```bash
+# Project-local (default)
+npx skills add iniself/epub-zh-translate -a opencode
+
+# Global
+npx skills add iniself/epub-zh-translate -a opencode -g
+```
+
+- Without `-g` it installs to `.opencode/skills/` in the current project; with
+  `-g` it installs to `~/.config/opencode/skills/`.
+- The directory name comes from `name` in `SKILL.md` (`epub-zh-translate`).
+- Interactive installs ask for Symlink or Copy. Symlink keeps one copy under
+  `.agents/skills/` and links it into OpenCode; choose Copy to keep a single
+  copy.
+- Invoke it with `@epub-zh-translate` as usual.
 
 ### Manual installation
 
