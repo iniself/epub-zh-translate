@@ -358,6 +358,22 @@ def chunk_state(path, nseg):
     return "broken", len(nums)
 
 
+def progress(cfg):
+    """Return (done, total) chunk counts for the whole project."""
+    index = read_index(cfg)
+    done = total = 0
+    for name in index:
+        info = index[name]
+        counts = chunk_counts(cfg, name, info)
+        stem = Path(name).stem
+        for ci, nseg in enumerate(counts, 1):
+            total += 1
+            state, _ = chunk_state(cfg.zh_dir / chunk_name(stem, ci), nseg)
+            if state == "done":
+                done += 1
+    return done, total
+
+
 def status(cfg):
     index = read_index(cfg)
     rows = []

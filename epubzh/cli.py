@@ -250,6 +250,8 @@ def cmd_next(args):
     cfg = config.load(args.config)
     target = guide.next_target(cfg, resume=args.resume)
     if not target:
+        done, total = chunks.progress(cfg)
+        print("progress: %d/%d chunks" % (done, total))
         print("all chunks translated")
         return 0
     filename, chunk, state, last, nseg = target
@@ -262,7 +264,9 @@ def cmd_next(args):
         detail = " needs repair"
     elif state == "broken":
         detail = " broken numbering"
+    done, total = chunks.progress(cfg)
     print("next: %s chunk %d/%d%s" % (filename, chunk, nseg, detail))
+    print("progress: %d/%d chunks" % (done, total))
     print("prompt: %s" % path)
     print("output: %s" % (cfg.zh_dir / chunks.chunk_name(stem, chunk)))
     print("action: read the prompt and execute only this chunk; "

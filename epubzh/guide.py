@@ -263,6 +263,22 @@ def _rulecard():
     return config_mod.DEFAULT_RULECARD.read_text(encoding="utf-8")
 
 
+def _has_single_markers(chunk_text):
+    """True when a segment has an open marker without its closing pair.
+
+    Self-closing inline tags (anchors, pagebreaks, images) become single
+    markers on purpose: the source has no closing tag, so the translation
+    must not add one. Detecting this lets the prompt warn the translator
+    even when the model would otherwise guess a pair.
+    """
+    for block in re.split(r"^@@@SEG \d+@@@\s*$", chunk_text, flags=re.M):
+        opens = set(re.findall(r"⟦(\d+)⟧", block))
+        closes = set(re.findall(r"⟦/(\d+)⟧", block))
+        if opens - closes:
+            return True
+    return False
+
+
 def _contract(cfg, stem, chunk, dst, state, last, nseg):
     check_cmd = "%s check --config %s %s --chunk %d --fix" % (
         _module_cmd(cfg), quote_path(cfg.path), stem, chunk)
@@ -344,7 +360,8 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
      整对删除，不要通过重新编号来修复。占位符编号是每段独立的，不同段可以重复使用
      `⟦0⟧`、`⟦1⟧`、`⟦2⟧`；不要跨段比较编号，也不要为了全局唯一改编号。成对占位符
      必须保持源文顺序，开标记放在对应译文前，闭标记紧跟对应译文后；只有单独占位符
-     可以随语序移动。
+     可以随语序移动。不要在回复里反复自我纠错（例如写 `Correct: ... -> NO!` 再重写）；
+     拿不准时直接看原文：原文没有 `⟦/n⟧` 就不补，然后直接写文件。
      `edit` 的 oldString 必须是该段当前完整文本（标记行 + 译文），newString 是
      修正后的同一段。
    - `not translated`：先判断这一段是否真的需要翻译。人名、机构、地址、代码、URL、
@@ -445,6 +462,15 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             parts.append("表中没有的术语，先查 `%s`，不要自创变体。" % cfg.terms_tsv)
         else:
             parts.append("本块未命中术语表；遇到术语先查 `%s`。" % cfg.terms_tsv)
+        parts.append("")
+
+    if _has_single_markers(chunk_text):
+        parts.append("## 本块包含单占位符（务必注意）")
+        parts.append("")
+        parts.append("本块有 `⟦n⟧` 在原文中没有对应的 `⟦/n⟧`。它们通常来自"
+                     "`<a .../>`、`<span .../>`、`<br/>`、`<img .../>` 等自闭合标签"
+                     "或分页符，**本来就没有闭合标记**。直接保留 `⟦n⟧`，"
+                     "不要补 `⟦/n⟧`；也不要反复自我纠错，直接写文件。")
         parts.append("")
 
     seen = introduced_for_chunk(cfg, chunk_text, exclude=dst)
