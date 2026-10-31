@@ -159,7 +159,11 @@ TOOL="<skill-base>/epubzh-run"
 1. `next --config <book.toml>`：它只返回一个分块，并生成对应的 prompt 文件；
 2. 读 `next` 打印的 prompt 路径，按执行契约只处理这一块；
 3. `check <stem> --chunk <n> --fix`；
-4. 通过后再运行一次 `next`，直到没有下一块。
+4. 通过后直接运行下一次 `next`，**不要问用户“是否继续”**，连续执行到
+   `next` 返回 `all chunks translated`。只有以下情况才停下来问用户：
+   - 同一段连续 2 次 `check` 仍报同一个错；
+   - 同一分块 3 轮 `check --chunk --fix` 仍不过；
+   - 需要用户确认术语、书名、目录等无法自动决定的内容。
 
 `next` 的输出里，`chunk 2 (15 segments)` 表示“第 2 块，共 15 段”，不是
 “第 2 块，共 15 块”；全书块数进度看 `progress: 11/128 chunks`。返回
