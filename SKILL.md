@@ -157,9 +157,13 @@ TOOL="<skill-base>/epubzh-run"
 用户只给项目目录时，不要自己重新规划整本书，也不要先跑全项目管理命令。按这个循环走：
 
 1. `next --config <book.toml>`：它只返回一个分块，并生成对应的 prompt 文件；
+   拿到输出后，先在回复正文写一行进度：
+   `📊 进度 X/Y · 正在翻译 <文件> 第 N 块`（X/Y 取 `next` 的 `progress:` 行）。
 2. 读 `next` 打印的 prompt 路径，按执行契约只处理这一块；
 3. `check <stem> --chunk <n> --fix`；
-4. 通过后直接运行下一次 `next`，**不要问用户“是否继续”**，连续执行到
+4. 通过后直接运行下一次 `next`，并在正文写一行：
+   `✅ 进度 X/Y · 已完成 <上一块文件> 第 N 块`（X/Y 取新 `next` 的
+   `progress:` 行），紧接着写下一轮的 `📊` 行。**不要问用户“是否继续”**，连续执行到
    `next` 返回 `all chunks translated`。只有以下情况才停下来问用户：
    - 同一段连续 2 次 `check` 仍报同一个错；
    - 同一分块 3 轮 `check --chunk --fix` 仍不过；
