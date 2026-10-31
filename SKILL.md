@@ -161,6 +161,11 @@ TOOL="<skill-base>/epubzh-run"
 3. `check <stem> --chunk <n> --fix`；
 4. 通过后再运行一次 `next`，直到没有下一块。
 
+`next` 的输出里，`chunk 2 (15 segments)` 表示“第 2 块，共 15 段”，不是
+“第 2 块，共 15 块”；全书块数进度看 `progress: 11/128 chunks`。返回
+`partial: 1/15 segments done` 时，按 `action:` 行从第 2 段续写，**不要用
+`--resume`**。
+
 `next` 默认严格按阅读顺序返回第一个不是 `done` 的分块；后面的 broken/partial 不会插队。
 只有用户明确说“从上次中断处继续”或“先修复坏块”时，才用 `next --resume`，它优先返回
 repair / partial / broken，再按顺序补 pending。所以不需要先跑全项目 `check`。项目级
@@ -177,6 +182,8 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
   不要追加解释，也不要换一种说法反复劝。
 - 继续已有项目时，第一条命令是 `next`，不是 `status`，更不是项目级 `check`。`next`
   一次只给一个分块；处理完再 `next`。
+- `next` 的 `action:` 行已经写明当前该做什么（续写、修复或新译），直接照做；
+  不要在 `next` 和 `next --resume` 之间反复犹豫。
 - 占位符编号是**每段独立**的：不同段可以重复 `⟦0⟧`、`⟦1⟧`、`⟦2⟧`。不要跨段比较
   编号，也不要为了“全局唯一”改编号。
 - 成对占位符必须保持源文顺序：开标记放在对应译文前，闭标记紧跟对应译文后，

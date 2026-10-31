@@ -259,18 +259,28 @@ def cmd_next(args):
     path = guide.prompt(cfg, stem, chunk, quiet=True)
     detail = ""
     if state == "partial":
-        detail = " partial %d/%d" % (last, nseg)
+        detail = (", partial: %d/%d segments done; continue from segment %d"
+                  % (last, nseg, last + 1))
+        action = ("read the prompt and append from segment %d; "
+                  "do not use --resume" % (last + 1))
     elif state == "repair":
-        detail = " needs repair"
+        detail = ", needs repair"
+        action = ("read the prompt and repair only the reported segments; "
+                  "do not rewrite the whole file")
     elif state == "broken":
-        detail = " broken numbering"
+        detail = ", broken numbering"
+        action = ("read the prompt and fix segment numbering first; "
+                  "do not rewrite unless it cannot be repaired")
+    else:
+        action = ("read the prompt and execute only this chunk; "
+                  "do not run a project-wide check")
     done, total = chunks.progress(cfg)
-    print("next: %s chunk %d/%d%s" % (filename, chunk, nseg, detail))
+    print("next: %s chunk %d (%d segments)%s" % (
+        filename, chunk, nseg, detail))
     print("progress: %d/%d chunks" % (done, total))
     print("prompt: %s" % path)
     print("output: %s" % (cfg.zh_dir / chunks.chunk_name(stem, chunk)))
-    print("action: read the prompt and execute only this chunk; "
-          "do not run a project-wide check")
+    print("action: %s" % action)
     print("check: %s check --config %s %s --chunk %d --fix"
           % (guide._module_cmd(cfg), guide.quote_path(cfg.path), stem, chunk))
     return 0
