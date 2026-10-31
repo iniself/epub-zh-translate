@@ -159,6 +159,7 @@ TOOL="<skill-base>/epubzh-run"
 1. `next --config <book.toml>`：它只返回一个分块，并生成对应的 prompt 文件；
    拿到输出后，先在回复正文写一行进度：
    `📊 进度 X/Y · 正在翻译 <文件> 第 N 块`（X/Y 取 `next` 的 `progress:` 行）。
+   **必须写在最终回复正文，不要只写在 thinking/推理过程里。**
 2. 读 `next` 打印的 prompt 路径，按执行契约只处理这一块；
 3. `check <stem> --chunk <n> --fix`；
 4. 通过后直接运行下一次 `next`，并在正文写一行：
