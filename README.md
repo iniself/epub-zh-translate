@@ -132,15 +132,20 @@ confirmation before starting.
 
 ### Chunk profiles
 
-`large` and `small` decide how much text one chunk holds. Choose before
-`extract`; switching later renumbers chunks and invalidates translations.
+The profile decides how much text one chunk holds. Choose before `extract`;
+switching later renumbers chunks and invalidates translations.
 
 | Profile | Per chunk | Use it for |
 | --- | --- | --- |
 | `large` (default) | about 2600 words, no segment cap | models with an 8k+ output window |
 | `small` | about 1200 words, at most 40 segments | smaller context/output windows, or books that stalled before |
+| `mini` | about 1000 words, at most 25 segments | weak models; table- and list-heavy books do better than with `small` |
+| `tiny` | about 600 words, at most 20 segments | models that loop while reasoning, or very small output windows |
 
-Write `Chunk profile: small` (or `分块配置：small`) when invoking the skill.
+Words and segments are two separate caps, whichever is reached first wins:
+prose usually hits the word cap, tables and lists usually hit the segment cap.
+
+Write `Chunk profile: mini` (or `分块配置：mini`) when invoking the skill.
 
 ### Paths
 
@@ -262,9 +267,13 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
   reading order and selects the first unfinished chunk. Run `next` again after
   that chunk passes. Add `--resume` only when the user wants to continue an
   interrupted or broken chunk first. Do not start with a project-wide `check`.
-- **The model keeps saying "I'll translate it" without writing**: the chunk is
-  probably too large, or the generated prompt was not used. Switch to `small`,
-  run `prompt` and hand `work/prompts/<stem>.<nn>.md` to one subagent per chunk.
+- **The model keeps saying "I'll translate it" without writing, or loops while
+  reasoning**: generate the minimal prompt with
+  `prompt <stem> --chunk <n> --brief` and send one line: "read this file; the
+  first step is write". If it still does not write, translate that chunk in the
+  main session or switch to a model with less thinking. Never dispatch the same
+  prompt to the same model a third time. New projects can start with `mini` or
+  `tiny`, which hold up better on weak models than `small`.
 - **Terminology drifts**: run `terms-audit`; put acceptable variants in the third
   column of `terms.tsv`. Keep the second column to a single canonical rendering.
 - **Changing the chunk profile mid-project**: not supported. It renumbers chunks

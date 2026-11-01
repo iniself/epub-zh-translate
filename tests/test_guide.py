@@ -1,4 +1,5 @@
 """Regression tests for state-aware chunk prompt generation."""
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,42 +50,125 @@ class OpeningTest(unittest.TestCase):
 class ContractTest(unittest.TestCase):
     def test_pending_writes_whole_chunk_first(self):
         text = contract("pending")
-        self.assertIn("第一条动作必须是写输出文件", text)
+        self.assertIn("第一步动作是 `write` 输出文件", text)
         self.assertIn("优先一次 `write` 写完整个分块", text)
-        self.assertNotIn("第一条动作必须是运行自检修复", text)
+        self.assertNotIn("运行第 3 条的自检", text)
 
     def test_partial_appends_without_rewriting(self):
         text = contract("partial", last=2)
-        self.assertIn("第一条动作是 `read` 文件末尾", text)
-        self.assertIn("从 `@@@SEG 003@@@` 开始追加", text)
+        self.assertIn("第一步动作是 `read` 文件末尾", text)
+        self.assertIn("从 `@@@SEG 003@@@` 开始继续追加", text)
         self.assertNotIn("优先一次 `write` 写完整个分块", text)
-        self.assertNotIn("第一条动作必须是写输出文件", text)
+        self.assertNotIn("第一步动作是 `write` 输出文件", text)
 
     def test_broken_runs_check_fix_before_writing(self):
         text = contract("broken")
-        self.assertIn("第一条动作必须是运行自检修复", text)
+        self.assertIn("第一步动作是运行第 3 条的自检", text)
         self.assertIn("不要先写文件", text)
         self.assertNotIn("优先一次 `write` 写完整个分块", text)
-        self.assertNotIn("第一条动作必须是写输出文件", text)
+        self.assertNotIn("第一步动作是 `write` 输出文件", text)
         self.assertIn("正确的 1..10 段", text)
 
     def test_repair_runs_check_fix_without_overwriting(self):
         text = contract("repair")
-        self.assertIn("第一条动作必须是运行自检", text)
+        self.assertIn("第一步动作是运行第 3 条的自检", text)
         self.assertIn("不要整块重写", text)
         self.assertIn("不要重新编号", text)
-        self.assertNotIn("第一条动作必须是写输出文件", text)
+        self.assertNotIn("第一步动作是 `write` 输出文件", text)
 
-    def test_contracts_explain_per_segment_numbering(self):
+    def test_rulecard_explains_per_segment_numbering(self):
+        # Per-segment numbering is stated once, in the rule card, instead of
+        # being repeated in every contract variant.
+        text = guide._rulecard()
+        self.assertIn("每段独立", text)
+        self.assertIn("不要跨段比较", text)
+
+    def test_contracts_do_not_ask_the_model_to_self_check(self):
         for state in ("pending", "repair", "partial", "broken"):
             text = contract(state, last=2)
-            self.assertIn("每段独立", text)
-            self.assertIn("不要跨段比较", text)
+            self.assertNotIn("自我纠错", text)
+            self.assertNotIn("提交前自检", text)
+            self.assertIn("check", text)
 
     def test_same_error_stops_after_two_rounds(self):
         text = contract("pending")
         self.assertIn("连续 2 次", text)
-        self.assertIn("停止修改", text)
+        self.assertIn("就停下", text)
+
+
+class RefreshGuideTest(unittest.TestCase):
+    def cfg(self, root):
+        cfg = SimpleNamespace(
+            title="书名", source_title="Original", author="Author",
+            language="zh-CN", work_dir=root, terms_tsv=root / "terms.tsv",
+            guide_file=root / "TRANSLATION_GUIDE.md")
+        cfg.terms_tsv.write_text("English\t中文\t\n", encoding="utf-8")
+        return cfg
+
+    def test_rewrites_a_stale_guide(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self.cfg(Path(tmp))
+            cfg.guide_file.write_text("old template", encoding="utf-8")
+            self.assertTrue(guide.refresh_guide(cfg, quiet=True))
+            self.assertNotIn("old template",
+                             cfg.guide_file.read_text(encoding="utf-8"))
+
+    def test_keeps_a_fresh_guide(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self.cfg(Path(tmp))
+            guide.refresh_guide(cfg, quiet=True)
+            self.assertFalse(guide.refresh_guide(cfg, quiet=True))
+
+    def test_skips_when_the_glossary_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self.cfg(Path(tmp))
+            cfg.terms_tsv.unlink()
+            self.assertFalse(guide.refresh_guide(cfg, quiet=True))
+
+
+class SingleMarkerTest(unittest.TestCase):
+    def test_names_the_segments_and_markers(self):
+        text = ("@@@SEG 001@@@\n⟦0⟧a⟦/0⟧ ⟦1⟧b\n"
+                "@@@SEG 002@@@\n⟦0⟧plain\n")
+        self.assertEqual(guide._single_marker_segments(text),
+                         [(1, ["⟦1⟧"]), (2, ["⟦0⟧"])])
+
+    def test_paired_markers_are_not_reported(self):
+        text = "@@@SEG 001@@@\n⟦0⟧a⟦/0⟧\n"
+        self.assertEqual(guide._single_marker_segments(text), [])
+
+
+class BriefPromptTest(unittest.TestCase):
+    def cfg(self):
+        return SimpleNamespace(path=Path("/tmp/book.toml"),
+                               segs_dir=Path("/tmp/segs"),
+                               zh_dir=Path("/tmp/zh"))
+
+    def build(self, state, last=0):
+        index = {"chapter.html": {"chunks": 1}}
+        with mock.patch.object(guide.chunks, "chunk_counts", return_value=[5]), \
+                mock.patch.object(guide, "_chunk_prompt_state",
+                                  return_value=(state, last)):
+            return guide._build_brief_prompt(self.cfg(), "chapter.html", 1, index)
+
+    def test_brief_prompt_keeps_only_the_mechanics(self):
+        text = self.build("pending")
+        self.assertIn("第一步是 `write` 输出文件", text)
+        self.assertIn("check --config", text)
+        self.assertIn("@@@SEG 001@@@", text)
+        self.assertNotIn("翻译规则卡", text)
+        self.assertNotIn("自我纠错", text)
+        self.assertNotIn("提交前自检", text)
+
+    def test_brief_prompt_resumes_partial_without_overwriting(self):
+        text = self.build("partial", last=2)
+        self.assertIn("第 3 段继续追加", text)
+        self.assertIn("不要覆盖已有内容", text)
+
+    def test_brief_prompt_repairs_before_writing(self):
+        text = self.build("repair")
+        self.assertIn("先运行规则 3 里的自检命令", text)
+        self.assertNotIn("第一步是 `write` 输出文件", text)
 
 
 class NextTargetTest(unittest.TestCase):

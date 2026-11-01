@@ -256,7 +256,7 @@ def cmd_next(args):
         return 0
     filename, chunk, state, last, nseg = target
     stem = Path(filename).stem
-    path = guide.prompt(cfg, stem, chunk, quiet=True)
+    path = guide.prompt(cfg, stem, chunk, quiet=True, brief=args.brief)
     detail = ""
     if state == "partial":
         detail = (", partial: %d/%d segments done; continue from segment %d"
@@ -326,7 +326,7 @@ def cmd_guide(args):
 def cmd_prompt(args):
     cfg = config.load(args.config)
     guide.prompt(cfg, args.name, args.chunk, stdout=args.stdout,
-                 full=args.full, force=args.force)
+                 full=args.full, force=args.force, brief=args.brief)
 
 
 def cmd_terms_audit(args):
@@ -364,8 +364,8 @@ def build_parser():
     p.add_argument("--source-dir", default="src", help="unpack directory for source epub")
     p.add_argument("--profile", default=config.DEFAULT_PROFILE,
                    choices=sorted(config.PROFILES),
-                   help="chunk preset: large (2600 words, no cap) or small "
-                        "(1200 words, max 40 segments)")
+                   help="chunk preset: large (2600 words, no cap), small "
+                        "(1200/40), mini (1000/25) or tiny (600/20)")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("unpack", help="unpack the source epub")
@@ -397,6 +397,8 @@ def build_parser():
     p.add_argument("--resume", action="store_true",
                    help="resume existing repair/partial/broken chunks first "
                         "instead of following strict reading order")
+    p.add_argument("--brief", action="store_true",
+                   help="write the minimal fallback prompt instead of the full one")
     p.set_defaults(func=cmd_next)
 
     p = sub.add_parser("terms-audit",
@@ -437,6 +439,9 @@ def build_parser():
                    help="print the prompt instead of writing work/prompts/")
     p.add_argument("--full", action="store_true",
                    help="use the full translation guide regardless of profile")
+    p.add_argument("--brief", action="store_true",
+                   help="write the minimal fallback prompt (no rule card, no "
+                        "glossary) for models that stall on the full prompt")
     p.add_argument("--force", action="store_true",
                    help="rewrite the prompt file even if it is unchanged")
     p.set_defaults(func=cmd_prompt)

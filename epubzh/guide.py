@@ -42,7 +42,8 @@ def seed_terms(cfg):
     print("wrote %s (edit this glossary before translating)" % cfg.terms_tsv)
 
 
-def render_guide(cfg):
+def render_guide_text(cfg):
+    """Rendered guide text plus the number of glossary rows."""
     template = config_mod.DEFAULT_GUIDE_TEMPLATE.read_text(encoding="utf-8")
     terms = read_terms(cfg)
     table = "\n".join("| %s | %s |" % (en, zh) for en, zh, _ in terms)
@@ -57,8 +58,33 @@ def render_guide(cfg):
             .replace("{{CLOSE}}", "\u27e7")
             .replace("{{TERMS}}", table)
             .replace("{{WORK}}", str(cfg.work_dir)))
+    return text, len(terms)
+
+
+def render_guide(cfg):
+    text, count = render_guide_text(cfg)
     cfg.guide_file.write_text(text, encoding="utf-8")
-    print("wrote %s (%d terms)" % (cfg.guide_file, len(terms)))
+    print("wrote %s (%d terms)" % (cfg.guide_file, count))
+
+
+def refresh_guide(cfg, quiet=False):
+    """Keep TRANSLATION_GUIDE.md in sync with the template and the glossary.
+
+    The full-profile prompt embeds this file, so a stale copy silently undoes
+    template fixes (for example the placeholder wording). Refreshing is safe:
+    the guide is generated data, and all hand edits belong in terms.tsv,
+    style.md, or decisions.md.
+    """
+    if not cfg.terms_tsv.exists():
+        return False
+    text, count = render_guide_text(cfg)
+    if cfg.guide_file.exists() \
+            and cfg.guide_file.read_text(encoding="utf-8") == text:
+        return False
+    cfg.guide_file.write_text(text, encoding="utf-8")
+    if not quiet:
+        print("refreshed %s (%d terms)" % (cfg.guide_file, count))
+    return True
 
 
 def _ps_quote(value):
@@ -263,20 +289,34 @@ def _rulecard():
     return config_mod.DEFAULT_RULECARD.read_text(encoding="utf-8")
 
 
-def _has_single_markers(chunk_text):
-    """True when a segment has an open marker without its closing pair.
+SEG_HEAD_RE = re.compile(r"^@@@\s*SEG\s*0*(\d+)\s*@@@\s*$", re.M)
+
+
+def _single_marker_segments(chunk_text):
+    """[(segment number, [markers])] for open markers with no closing pair.
 
     Self-closing inline tags (anchors, pagebreaks, images) become single
     markers on purpose: the source has no closing tag, so the translation
-    must not add one. Detecting this lets the prompt warn the translator
-    even when the model would otherwise guess a pair.
+    must not add one. Naming the segments and their markers spares a weak
+    model from scanning the whole chunk to decide which markers need a pair,
+    which is where small models tend to start reasoning loops.
     """
-    for block in re.split(r"^@@@SEG \d+@@@\s*$", chunk_text, flags=re.M):
-        opens = set(re.findall(r"⟦(\d+)⟧", block))
-        closes = set(re.findall(r"⟦/(\d+)⟧", block))
-        if opens - closes:
-            return True
-    return False
+    pieces = SEG_HEAD_RE.split(chunk_text)
+    out = []
+    for i in range(1, len(pieces) - 1, 2):
+        number, body = int(pieces[i]), pieces[i + 1]
+        closed = {m.group(1)[1:] for m in markup.PH_RE.finditer(body)
+                  if m.group(1).startswith("/")}
+        singles = []
+        for match in markup.PH_RE.finditer(body):
+            key = match.group(1)
+            if key.startswith("/") or key in closed:
+                continue
+            if match.group(0) not in singles:
+                singles.append(match.group(0))
+        if singles:
+            out.append((number, singles))
+    return out
 
 
 def _contract(cfg, stem, chunk, dst, state, last, nseg):
@@ -285,111 +325,90 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
 
     if state == "repair":
         first = (
-            "1. 输出文件已有完整译文，但自检未通过。你的第一条动作必须是运行自检：\n"
-            "   `%s`\n"
-            "   不要先写文件，不要整块重写，也不要重新编号。`--fix` 只处理\n"
-            "   机械错误；仍报错的段按第 4 条只改那一段。" % check_cmd
+            "1. 输出文件已有完整译文，但自检没通过。第一步动作是运行第 3 条的自检\n"
+            "   命令，不要先写文件，也不要整块重写。"
         )
         second = (
-            "2. 只改自检点名的段。`placeholder mismatch` 的 `extra` 标记直接删除；\n"
-            "   源文是单独 `⟦n⟧` 时不要补 `⟦/n⟧`。占位符编号每段独立，不要跨段比较。"
+            "2. 只改自检点名的段，改完再跑一次自检。占位符按原文照抄：原文没有\n"
+            "   `⟦/n⟧` 就不要补，也不要重新编号。"
         )
     elif state == "broken":
         first = (
-            "1. 输出文件已存在但段号不连续。你的第一条动作必须是运行自检修复：\n"
-            "   `%s`\n"
-            "   不要先写文件，不要整块重写。`--fix` 会自动删除重复段、删除越界段、\n"
-            "   按段号排序；修复后若仍报段号不连续，才进入第 2 条。" % check_cmd
+            "1. 输出文件段号不连续。第一步动作是运行第 3 条的自检命令，`--fix` 会\n"
+            "   删除重复段、越界段并按段号排序；不要先写文件。"
         )
         second = (
-            "2. 修复后只处理自检报错的段，不要通读或重写整块。报\n"
-            "   `missing seg N: insert between ...` 时按第 4 条在指定位置插入；\n"
-            "   只有文件结构严重损坏、无法按段号修复时，才用 `write` 重写整个\n"
-            "   分块为正确的 1..%d 段。" % nseg
+            "2. 修复后仍缺段时，按报错给的 `insert between ...` 位置插入；只有结构\n"
+            "   严重损坏、无法按段号修复时，才用 `write` 重写整个分块为正确的 1..%d 段。"
+            % nseg
         )
     elif state == "partial":
         first = (
-            "1. 输出文件已有第 1–%d 段。第一条动作是 `read` 文件末尾，确认最后一段\n"
-            "   编号 %d；不要 `write` 覆盖已有内容，也不要从第 1 段重写。"
-            % (last, last)
+            "1. 输出文件已有第 1–%d 段。第一步动作是 `read` 文件末尾，确认最后一段\n"
+            "   编号 %d；不要覆盖已有内容，也不要从第 1 段重写。" % (last, last)
         )
         second = (
-            "2. 从 `@@@SEG %03d@@@` 开始追加：`edit` 的 oldString 只取最后一段\n"
-            "   （标记行 + 译文），newString = oldString + 换行 + 新段，绝对不要重复\n"
-            "   最后一段。`edit` 返回 identical / 找不到 / 多处匹配时不要重试；先\n"
-            "   `read` 完整文件，再 `write` 覆盖，确保第 1–%d 段原样保留。"
-            % (last + 1, last)
+            "2. 从 `@@@SEG %03d@@@` 开始继续追加：`edit` 的 oldString 只取最后一段\n"
+            "   （标记行 + 译文），newString = oldString + 换行 + 新段，不要重复最后一段。\n"
+            "   `edit` 返回 identical / 找不到 / 多处匹配时不要重试，直接 `write`\n"
+            "   覆盖整个文件，确保第 1–%d 段原样保留。" % (last + 1, last)
         )
     elif state == "done":
         first = (
-            "1. 输出文件已存在，段号完整且自检通过。默认不要重写；只有用户明确\n"
-            "   要求重译时，才先删除输出文件再重新翻译。"
+            "1. 输出文件已存在，段号完整且自检通过。默认不要重写。"
         )
         second = (
-            "2. 如果用户要求局部修改，只改指定段落，不要通读或重写整块。"
+            "2. 只有用户明确要求重译时才删除输出文件重来；局部修改只改指定段落。"
         )
     else:
         first = (
-            "1. 你的第一条动作必须是写输出文件；不要复述任务、不要解释思路、不要输出\n"
-            "   「我将翻译」「Actually, I'll ...」这类句子。"
+            "1. 第一步动作是 `write` 输出文件。需要推理就在思考里完成，正文第一条\n"
+            "   消息必须是工具调用。"
         )
         second = (
-            "2. 优先一次 `write` 写完整个分块，不要习惯性边写边追加。只有 `write` 明显\n"
-            "   被截断时才追加；追加前先 `read` 文件末尾，确认最后一段编号 n：\n"
-            "   - oldString 只取最后一段（`@@@SEG nnn@@@` + 该段译文），不要带上倒数第二段。\n"
-            "   - newString = oldString + 换行 + 新段，绝对不要在 newString 里重复最后一段。\n"
-            "   - `edit` 返回 identical / 找不到 oldString / 多处匹配时，不要重试，直接\n"
-            "     `write` 覆盖整个分块。"
+            "2. 优先一次 `write` 写完整个分块。只有写被截断时才追加：`edit` 的\n"
+            "   oldString 只取最后一段（`@@@SEG nnn@@@` + 该段译文），newString =\n"
+            "   oldString + 换行 + 新段，不要在 newString 里重复最后一段。`edit` 返回\n"
+            "   identical / 找不到 / 多处匹配时不要重试，直接 `write` 覆盖整个分块。"
         )
 
-    return """## 执行契约（务必遵守，违反任何一条都会导致返工）
+    step3 = ("3. 写完后运行自检（`--fix` 会自动处理重复段、越界段和段号排序）："
+             if state in ("pending", "partial") else
+             "3. 自检命令（`--fix` 会自动处理重复段、越界段和段号排序）：")
+
+    return """## 执行契约
 
 %s
 
 %s
-3. 运行自检（`--fix` 会自动修复机械错误）：
+%s
    `%s`
-4. 自检报错按类型处理，不要通读整块：
-   - `segment markers`：`--fix` 会自动删除重复段、删除越界段、按段号排序；
-     仍报 `missing seg N: insert between ... and ...` 时，用 `edit` 在指定的
-     两个标记之间插入 `@@@SEG NNN@@@` 和该段译文，**不要追加到文件末尾**。
-   - 报 `kept the last copy of ambiguous seg N` 时，检查这一段是否正确；不确定就
-     只重写这一段。
-   - `placeholder mismatch` / `placeholder order mismatch` / `stray placeholder` /
-     `missing space`：只改报错的那一段。`extra` 里的标记一律删除；成对的多余标记
-     整对删除，不要通过重新编号来修复。占位符编号是每段独立的，不同段可以重复使用
-     `⟦0⟧`、`⟦1⟧`、`⟦2⟧`；不要跨段比较编号，也不要为了全局唯一改编号。成对占位符
-     必须保持源文顺序，开标记放在对应译文前，闭标记紧跟对应译文后；只有单独占位符
-     可以随语序移动。不要在回复里反复自我纠错（例如写 `Correct: ... -> NO!` 再重写）；
-     拿不准时直接看原文：原文没有 `⟦/n⟧` 就不补，然后直接写文件。
-     `edit` 的 oldString 必须是该段当前完整文本（标记行 + 译文），newString 是
-     修正后的同一段。
-   - `not translated`：先判断这一段是否真的需要翻译。人名、机构、地址、代码、URL、
-     应保留原文的标题等，原样保留，并在该段内单独加一行 `@@@VERBATIM@@@`（段首或
-     段尾都可以）；确实需要翻译的，只改报错的这一段。
-   - `file missing`：只报其他分块时忽略并结束。
-5. 同一段同一个错误连续 2 次 `check` 仍出现，停止修改并只回复一行
-   `失败：<段号 + 原因>`；不要继续猜。
-6. 同一分块最多 3 轮自检；仍不过就只回复一行 `失败：<原因>` 并结束。
-7. 完成后只回复一行：`已写入 %s；check OK`
-""" % (first, second, check_cmd, dst)
+4. 自检报错时只改报错的那一段，改完再跑一次：
+   - 占位符按原文照抄；`extra` 里的标记删掉，成对的多余标记整对删除。
+   - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
+     保留，并在段内单独加一行 `@@@VERBATIM@@@`。
+5. 同一段同一个错误连续 2 次仍出现就停下，回复一行 `失败：<段号 + 原因>`。
+   同一分块最多 3 轮自检，仍不过就回复一行 `失败：<原因>` 并结束。
+6. 完成后只回复一行：`已写入 %s；check OK`
+""" % (first, second, step3, check_cmd, dst)
 
 
 def _opening(state, chunk, last):
     """State-aware first action, so recovery prompts do not contradict."""
     if state == "repair":
         return ("**立即开始：先运行 `check --chunk %d --fix` 查看并修复现有译文；"
-                "文件已有完整译文，不要整块重写；不要先回复计划。**" % chunk)
+                "文件已有完整译文，不要整块重写。**" % chunk)
     if state == "partial":
         return ("**立即开始：读完输入文件后先 `read` 输出文件末尾，确认最后一段"
-                "编号 %d，再从下一段继续追加；不要先回复计划。**" % last)
+                "编号 %d，再从下一段继续追加。**" % last)
     if state == "broken":
         return ("**立即开始：先运行 `check --chunk %d --fix` 修复段号，"
-                "不要先写文件；不要先回复计划。**" % chunk)
+                "不要先写文件。**" % chunk)
     if state == "done":
         return ("**该分块已完成且自检通过；默认不要重写。只有用户明确要求重译时，"
                 "才删除输出文件后重新翻译。**")
-    return "**立即开始：读完输入文件后直接写输出文件，不要先回复计划。**"
+    return ("**立即开始：读完输入文件后直接写输出文件。推理放在思考里，"
+            "正文第一条消息必须是工具调用。**")
 
 
 def _chunk_prompt_state(cfg, filename, chunk, nseg):
@@ -464,13 +483,17 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             parts.append("本块未命中术语表；遇到术语先查 `%s`。" % cfg.terms_tsv)
         parts.append("")
 
-    if _has_single_markers(chunk_text):
-        parts.append("## 本块包含单占位符（务必注意）")
+    singles = _single_marker_segments(chunk_text)
+    if singles:
+        parts.append("## 本块的单占位符（原文就没有闭合标记）")
         parts.append("")
-        parts.append("本块有 `⟦n⟧` 在原文中没有对应的 `⟦/n⟧`。它们通常来自"
-                     "`<a .../>`、`<span .../>`、`<br/>`、`<img .../>` 等自闭合标签"
-                     "或分页符，**本来就没有闭合标记**。直接保留 `⟦n⟧`，"
-                     "不要补 `⟦/n⟧`；也不要反复自我纠错，直接写文件。")
+        for number, markers in singles[:20]:
+            parts.append("- 第 %d 段：%s" % (number, "、".join(markers)))
+        if len(singles) > 20:
+            parts.append("- 其余 %d 段同理" % (len(singles) - 20))
+        parts.append("")
+        parts.append("上面这些标记在原文里没有对应的 `⟦/n⟧`，原样保留即可，"
+                     "不要补闭合标记。")
         parts.append("")
 
     seen = introduced_for_chunk(cfg, chunk_text, exclude=dst)
@@ -503,35 +526,70 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             parts.append(body.rstrip())
             parts.append("")
 
-    if state == "partial":
-        parts.append("## 这是一个未写完的分块")
-        parts.append("")
-        parts.append("输出文件已有第 1–%d 段，且编号正确。不要重写这些段落，"
-                     "从 `@@@SEG %03d@@@` 开始追加到文件末尾；"
-                     "补齐后再按执行契约自检。" % (last, last + 1))
-        parts.append("")
-    elif state == "repair":
-        parts.append("## 已有译文需要修复")
-        parts.append("")
-        parts.append("输出文件的段号完整，但自检发现了占位符、空格或未翻译问题。"
-                     "先运行 `check --chunk %d --fix`；只修改自检点名的段，"
-                     "不要整块重写，也不要重新编号。" % chunk)
-        parts.append("")
-    elif state == "broken":
-        parts.append("## 已有文件编号异常")
-        parts.append("")
-        parts.append("输出文件已存在但段号不连续。先运行 `check --chunk %d --fix`；"
-                     "修复后按自检报错只处理对应段：缺段按指定位置插入，"
-                     "只有结构严重损坏、无法按段号修复时，才整体重写为正确的 "
-                     "1..%d 段。" % (chunk, nseg))
-        parts.append("")
-
     parts.append(_contract(cfg, stem, chunk, dst, state, last, nseg).rstrip())
     return "\n".join(parts) + "\n"
 
 
+def _build_brief_prompt(cfg, name, chunk, index):
+    """Minimal fallback prompt for models that loop on the full contract.
+
+    Long rule lists and self-check duties are what weak models get stuck on:
+    they try to verify every placeholder inside their reasoning and never
+    reach the write call. This version keeps only the output shape, two
+    mechanical rules, and the check command, so there is nothing left to
+    deliberate about.
+    """
+    info = index[name]
+    stem = Path(name).stem
+    src = cfg.segs_dir / chunks.chunk_name(stem, chunk)
+    dst = cfg.zh_dir / chunks.chunk_name(stem, chunk)
+    nseg = chunks.chunk_counts(cfg, name, info)[chunk - 1]
+    state, last = _chunk_prompt_state(cfg, name, chunk, nseg)
+    check_cmd = "%s check --config %s %s --chunk %d --fix" % (
+        _module_cmd(cfg), quote_path(cfg.path), stem, chunk)
+
+    if state == "partial":
+        start = ("输出文件已有第 1–%d 段。先 `read` 文件末尾，从第 %d 段继续追加，"
+                 "不要覆盖已有内容。" % (last, last + 1))
+    elif state in ("repair", "broken"):
+        start = ("输出文件已存在但自检没通过。先运行规则 3 里的自检命令，只改报错的"
+                 "那一段，不要整块重写。")
+    elif state == "done":
+        start = "这个分块已完成且自检通过，默认不要重写。"
+    else:
+        start = ("现在开始：第一步是 `write` 输出文件。推理放在思考里，"
+                 "正文第一条消息必须是工具调用。")
+
+    return "\n".join([
+        "把输入文件的每一段翻译成简体中文，写入输出文件。",
+        "",
+        "输入：%s" % src,
+        "输出：%s" % dst,
+        "",
+        start,
+        "",
+        "格式（标记行原样照抄）：",
+        "",
+        "@@@SEG 001@@@",
+        "译文",
+        "@@@SEG 002@@@",
+        "译文",
+        "",
+        "规则：",
+        "1. `⟦0⟧`、`⟦/0⟧` 是原文的行内格式标记：原文有几个就抄几个，顺序不变。",
+        "   编号每段独立，不同段可以都从 `⟦0⟧` 开始。",
+        "2. 整段是代码、命令、日志、URL：原文照抄，并在段内加一行 "
+        "`@@@VERBATIM@@@`。",
+        "3. 不用自己核对标记。写完运行：",
+        "   `%s`" % check_cmd,
+        "   报错只改报错的那一段，最多两轮。",
+        "4. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
+        % dst,
+    ]) + "\n"
+
+
 def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False,
-           quiet=False):
+           quiet=False, brief=False):
     index = chunks.read_index(cfg)
     if not name:
         pending = []
@@ -583,16 +641,18 @@ def prompt(cfg, name=None, chunk=None, stdout=False, full=False, force=False,
     if chunk < 1 or chunk > info["chunks"]:
         raise SystemExit("chunk must be 1..%d" % info["chunks"])
 
-    text = _build_prompt(cfg, filename, chunk, index, full=full)
-    if cfg.guide_file.exists() and cfg.terms_tsv.exists() \
-            and cfg.terms_tsv.stat().st_mtime > cfg.guide_file.stat().st_mtime:
-        print("warning: terms.tsv is newer than TRANSLATION_GUIDE.md; "
-              "run `epubzh guide` to refresh the full guide")
+    if not brief and (full or cfg.profile == "large"):
+        # The full prompt embeds the guide, so regenerate it first: a stale
+        # copy would undo template fixes on existing projects.
+        refresh_guide(cfg, quiet=quiet)
+    text = (_build_brief_prompt(cfg, filename, chunk, index) if brief
+            else _build_prompt(cfg, filename, chunk, index, full=full))
     if stdout:
         print(text)
         return
     cfg.prompts_dir.mkdir(parents=True, exist_ok=True)
-    path = cfg.prompts_dir / ("%s.%02d.md" % (stem, chunk))
+    suffix = ".brief.md" if brief else ".md"
+    path = cfg.prompts_dir / ("%s.%02d%s" % (stem, chunk, suffix))
     if path.exists() and not force and path.read_text(encoding="utf-8") == text:
         if not quiet:
             print("prompt unchanged: %s" % path)

@@ -16,7 +16,7 @@ description: 使用本地 epubzh 流水线把整本 EPUB 翻译成简体中文�
 - 输出文件（必填）：文件名即可，例如 `mybook-zh.epub`；也可以给相对或绝对路径
 - 项目目录（可选）：不填时按输出文件推导为
   `<输出文件所在目录>/<输出文件名去掉 .epub>-project`
-- 分块配置（可选）：`large`（默认）或 `small`
+- 分块配置（可选）：`large`（默认）、`small`、`mini` 或 `tiny`
 
 用户只需要给文件名。**不要要求用户提供绝对路径**，也不要因为用户只写了文件名就反问。
 
@@ -70,11 +70,17 @@ work：/path/to/books/mybook-zh-project/work
 分块配置决定每个翻译分块的大小，**必须在 `init` 之前确定**，翻译开始后不能改：
 
 - `large`（默认，等同历史行为）：约 2600 词、不限段数，适合输出上限 ≥8k 的大模型；
-- `small`：约 1200 词、最多 40 段，适合上下文或输出受限的模型，也用于之前翻译卡住过的书。
+- `small`：约 1200 词、最多 40 段，适合上下文或输出受限的模型，也用于之前翻译卡住过的书；
+- `mini`：约 1000 词、最多 25 段，弱模型首选；表格、列表多的书用它比 `small` 更稳；
+- `tiny`：约 600 词、最多 20 段，实验档，用于会陷入思考循环或输出窗口很小的模型。
+
+词数和段数是两个上限，谁先到谁生效：散文通常词数先到，表格和列表通常段数先到。
+`mini`/`tiny` 只在 `init` 时生效，不能给已经切过块的项目换档。
 
 用户通常在调用时写一行 `分块配置：small`；也识别 `模型：small` 这种写法。没写就是
 `large`。把它映射成 `init --profile <值>`，非法值必须停下来问，不要回落到默认值。
 `init` 之后读回 `book.toml` 的 `[extract] profile` 并复述，防止说 small 实际跑 large。
+用户只说“模型比较弱/容易卡住”而没给档位时，先按 `mini` 起步；仍卡住再建议 `tiny`。
 
 用户调用模板（用户只写文件名，不需要绝对路径）：
 
@@ -125,7 +131,9 @@ work：/path/to/books/mybook-zh-project/work
 
 ### 分块翻译（照做，不要自己发明流程）
 
-每个分块 = 一个 subagent = 一次 `write`。主会话只做调度和校验，**不要在主会话里直接翻译整块**。
+每个分块 = 一个 subagent = 一次 `write`。主会话只做调度和校验，**不要在主会话里
+直接翻译整块**；唯一例外是同一块已经按看门狗流程失败两次（见下文），这时主会话
+可以直接翻译该块，避免整本书卡死在一块上。
 
 ```bash
 # macOS / Linux
@@ -150,6 +158,9 @@ TOOL="<skill-base>/epubzh-run"
 
 # 5. 只校验这一块（--fix 自动修复机械错误）
 "$TOOL" check --config book.toml <stem> --chunk <n> --fix
+
+# 兜底：subagent 空转（只回复计划、不写文件）时改用极简提示词
+"$TOOL" prompt <stem> --chunk <n> --brief
 ```
 
 ### 继续已有项目（包括小模型）
@@ -183,12 +194,11 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 硬规则：
 
-- 分块提示词必须用 `prompt` 生成，不要自己拼；`large` 带完整规范，`small` 带规则卡 +
-  本块术语 + 上文。
+- 分块提示词必须用 `prompt` 生成，不要自己拼；`large` 带完整规范，其余档位带规则卡 +
+  本块术语 + 上文；`--brief` 生成极简版，只用于空转兜底。
 - 一个 subagent 只做一个分块，不要让它顺手翻译别的分块。
 - 子代理如果反复说“我将翻译”“Actually, I'll just translate it”却不动手，说明它没有按
-  提示词执行：重发一句“读 `<prompt 文件>`，按执行契约直接写文件，不要回复计划”，
-  不要追加解释，也不要换一种说法反复劝。
+  提示词执行：不要重发长提示词，按“主会话看门狗”第 2 条改用 `--brief`。
 - 继续已有项目时，第一条命令是 `next`，不是 `status`，更不是项目级 `check`。`next`
   一次只给一个分块；处理完再 `next`。
 - `next` 的 `action:` 行已经写明当前该做什么（续写、修复或新译），直接照做；
@@ -227,11 +237,34 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 1. 子代理返回后，主会话**必须再跑一次** `check --chunk <n> --fix`；不要相信子代理
    回复的“已完成”。
-2. 子代理没有写输出文件、只回复计划、或长时间没有动作：中断它，重发一次
-   “读 `<prompt>`，直接写文件，不要回复计划”，不要追加解释。
-3. 同一分块最多派发 2 次；第 2 次仍不过，停止派发并把具体报错报告给用户。
+2. 子代理没有写输出文件、只回复计划、或在推理里反复自我纠错：中断它，按下面升级，
+   **不要重发同一份长提示词**：
+   - 第 2 次派发：运行 `prompt <stem> --chunk <n> --brief`，只发一句
+     “读 `<brief 文件>`，第一步是 write 输出文件”，不要追加解释；
+   - 第 2 次仍没有写出文件：主会话直接翻译这一块（允许的例外），或换模型 / 降低
+     thinking 深度后重派；把块号和原因记进 `work/decisions.md`。
+   - **不要第 3 次把同一份提示词派给同一个模型**：重复派发只会重复空转。
+3. 同一分块最多派发 2 次（正常一次 + brief 一次）；之后走第 2 条的兜底。
 4. 子代理的完成回复应为 `已写入 <path>；check OK` 或 `失败：<原因>`；没有 `check OK`
    就按未完成处理。
+
+弱模型（4B 级激活、thinking 很长的模型）建议单独配一个翻译 subagent，降低推理深度，
+必要时加 `steps` 上限。示例（opencode 配置，模型 ID 按实际填写）：
+
+```jsonc
+{
+  "agents": {
+    "translate": {
+      "mode": "subagent",
+      "description": "Translates one EPUB chunk into Simplified Chinese",
+      "model": "<provider>/<model>#low",
+      "steps": 12
+    }
+  }
+}
+```
+
+主会话的大模型只用于兜底单块，不要用它整本代劳。
 
 ## 四、内容处理策略
 
@@ -283,7 +316,7 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 ## 七、验收与汇报
 
 - 抽查：封面、目录、一章正文、一个表格、一个代码块、索引页。
-- 汇报：输出路径、分块配置（large/small）、总块数/完成数、`check` 结果、`terms-audit`
+- 汇报：输出路径、分块配置（large/small/mini/tiny）、总块数/完成数、`check` 结果、`terms-audit`
   结论、`verify` 结果、遗留问题、抽查结论。
 
 ## 八、工具调用契约
@@ -334,6 +367,7 @@ CONFIG="$PROJECT/book.toml"
 "$TOOL" next --config "$CONFIG"
 "$TOOL" status --config "$CONFIG"
 "$TOOL" prompt <stem> --chunk <n> --config "$CONFIG"
+"$TOOL" prompt <stem> --chunk <n> --brief --config "$CONFIG"
 "$TOOL" check <stem> --chunk <n> --config "$CONFIG"
 "$TOOL" check --config "$CONFIG"
 "$TOOL" check --config "$CONFIG" --all
@@ -356,8 +390,9 @@ CONFIG="$PROJECT/book.toml"
   或修正路径，不要换目录反复试。
 - 新项目先 `init` + `extract`；已有 `book.toml` 时先 `next`，从它给出的那一块继续，
   不要先跑全项目 `check`，也不要覆盖已有译文。
-- `--profile` 只在 `init` 时决定（`large`/`small`）。已有译文后用 `extract --profile`
-  切换会被拒绝；`--force` 会重切分块，等于要求重译，除非用户明确同意，不要使用。
+- `--profile` 只在 `init` 时决定（`large`/`small`/`mini`/`tiny`）。已有译文后用
+  `extract --profile` 切换会被拒绝；`--force` 会重切分块，等于要求重译，除非用户
+  明确同意，不要使用。
 - `next` 默认按阅读顺序返回第一个不是 `done` 的分块，并生成对应 prompt；它不会修改
   译文。用户要求从上次中断处继续时用 `next --resume`，它先返回 repair / partial /
   broken，再按顺序补 pending。
@@ -367,7 +402,8 @@ CONFIG="$PROJECT/book.toml"
 - `status` 里的 `Np` 是 partial、`Nb` 是 broken；`prompt` 会给出续写或重写指令。
   如果分块段号完整但自检有错，`prompt` 会标记为 repair，要求先修复而不是重写。
 - `prompt` 默认把提示词写到 `work/prompts/<stem>.<nn>.md`，终端只打印路径；
-  需要看内容时加 `--stdout`。
+  需要看内容时加 `--stdout`。`--brief` 写到 `<stem>.<nn>.brief.md`，是空转兜底用
+  的极简版（无规则卡、无术语表），只在看门狗第 2 次派发时使用。
 - `build` 每次都从源 EPUB 重新复制并重建 `work/build`；不要手工修改
   `work/build`。
 - `verify` 检查最终 EPUB 的结构、链接、锚点和占位符；它不替代 `epubcheck`。

@@ -12,10 +12,14 @@ DEFAULT_TERMS = Path(__file__).parent / "defaults" / "terms.tsv"
 DEFAULT_RULECARD = Path(__file__).parent / "defaults" / "rulecard.md"
 
 # Chunk size presets. "large" is the historical behaviour and stays the
-# default so existing projects keep their chunk numbering.
+# default so existing projects keep their chunk numbering. "mini" and "tiny"
+# are experimental tiers for weak models: the word limit governs prose, while
+# the segment cap governs short-segment content such as tables and lists.
 PROFILES = {
     "large": {"words_per_chunk": 2600, "max_segments_per_chunk": 0},
     "small": {"words_per_chunk": 1200, "max_segments_per_chunk": 40},
+    "mini": {"words_per_chunk": 1000, "max_segments_per_chunk": 25},
+    "tiny": {"words_per_chunk": 600, "max_segments_per_chunk": 20},
 }
 DEFAULT_PROFILE = "large"
 
@@ -277,9 +281,10 @@ skip = []
 # Elements kept byte-identical during extraction, as "tag" or "tag.class".
 # Use this for code blocks a publisher styles without <pre>.
 protect_blocks = []
-# Chunk preset: "large" (2600 words, no segment cap) or "small"
-# (1200 words, at most 40 segments). Decide it before `extract`; changing it
-# later renumbers chunks and invalidates existing translations.
+# Chunk preset: "large" (2600 words, no cap), "small" (1200 words, max 40
+# segments), "mini" (1000 words, max 25) or "tiny" (600 words, max 20).
+# Decide it before `extract`; changing it later renumbers chunks and
+# invalidates existing translations.
 profile = "%s"
 words_per_chunk = %d
 max_segments_per_chunk = %d

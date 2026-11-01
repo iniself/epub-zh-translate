@@ -19,8 +19,8 @@ skip = []
 # Elements kept byte-identical during extraction, as "tag" or "tag.class".
 # Use this for code blocks a publisher styles without <pre>.
 protect_blocks = []
-# Chunk preset: "large" (2600 words, no segment cap) or "small"
-# (1200 words, at most 40 segments). Decide it before `extract`.
+# Chunk preset: "large" (2600 words, no cap), "small" (1200/40),
+# "mini" (1000/25) or "tiny" (600/20). Decide it before `extract`.
 profile = "large"
 words_per_chunk = 2600
 max_segments_per_chunk = 0
