@@ -142,10 +142,15 @@ switching later renumbers chunks and invalidates translations.
 | `mini` | about 1000 words, at most 25 segments | weak models; table- and list-heavy books do better than with `small` |
 | `tiny` | about 600 words, at most 20 segments | models that loop while reasoning, or very small output windows |
 
+`large` is the only default; `small`, `mini`, and `tiny` are non-default presets
+that differ only in size, from more context down to smaller writes. All four must
+be chosen before `extract`, and an existing project cannot switch.
+
 Words and segments are two separate caps, whichever is reached first wins:
 prose usually hits the word cap, tables and lists usually hit the segment cap.
 
-Write `Chunk profile: mini` (or `分块配置：mini`) when invoking the skill.
+Write `Chunk profile: <profile>` (or `分块配置：<档位>`, for example
+`分块配置：mini`) when invoking the skill.
 
 ### Paths
 
@@ -272,12 +277,14 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
   `prompt <stem> --chunk <n> --brief` and send one line: "read this file; the
   first step is write". If it still does not write, translate that chunk in the
   main session or switch to a model with less thinking. Never dispatch the same
-  prompt to the same model a third time. New projects can start with `mini` or
-  `tiny`, which hold up better on weak models than `small`.
+  prompt to the same model a third time. New projects on weak models can start
+  with `small`, `mini`, or `tiny`; the smaller the profile, the less each chunk
+  asks the model to write.
 - **Terminology drifts**: run `terms-audit`; put acceptable variants in the third
   column of `terms.tsv`. Keep the second column to a single canonical rendering.
-- **Changing the chunk profile mid-project**: not supported. It renumbers chunks
-  and invalidates existing translations.
+- **Changing the chunk profile mid-project**: not supported. All four profiles
+  must be chosen before `extract`; switching renumbers chunks and invalidates
+  existing translations.
 - **`init` reports `source not found`**: put the source EPUB next to the output
   file, or pass the correct relative/absolute path in the prompt. The error lists
   the directories it searched and the EPUBs it found; fix the path instead of

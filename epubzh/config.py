@@ -11,10 +11,11 @@ DEFAULT_GUIDE_TEMPLATE = Path(__file__).parent / "defaults" / "guide-template.md
 DEFAULT_TERMS = Path(__file__).parent / "defaults" / "terms.tsv"
 DEFAULT_RULECARD = Path(__file__).parent / "defaults" / "rulecard.md"
 
-# Chunk size presets. "large" is the historical behaviour and stays the
-# default so existing projects keep their chunk numbering. "mini" and "tiny"
-# are experimental tiers for weak models: the word limit governs prose, while
-# the segment cap governs short-segment content such as tables and lists.
+# Chunk size presets. "large" is the default and keeps the historical chunk
+# numbering. "small", "mini" and "tiny" are non-default presets that differ
+# only in size, from more context to smaller writes. In every capped preset
+# the word limit governs prose and the segment cap governs short-segment
+# content such as tables and lists.
 PROFILES = {
     "large": {"words_per_chunk": 2600, "max_segments_per_chunk": 0},
     "small": {"words_per_chunk": 1200, "max_segments_per_chunk": 40},
