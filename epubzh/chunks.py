@@ -220,6 +220,20 @@ def _remove_extra_single_closes(lines, seg):
 
 
 LITERAL_SPAN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'’&:!?()/+\-]*$")
+PAGEBREAK_RE = re.compile(r'epub:type="pagebreak"|role="doc-pagebreak"')
+EMPTY_ANCHOR_RE = re.compile(r'^<a\b[^>]*\bid="[^"]+"[^>]*/>$')
+
+
+def _invisible_anchor(item):
+    """True for anchors the reader never sees in the rendered text.
+
+    Pagebreaks and empty ``<a id=.../>`` targets are navigation anchors. Their
+    exact word position barely matters visually, so keeping them at an
+    approximate place beats dropping them and blocking the chunk. Visible
+    elements such as ``<br/>`` and ``<img/>`` are never auto-placed.
+    """
+    html = (item.get("open_html") or "").strip()
+    return bool(PAGEBREAK_RE.search(html) or EMPTY_ANCHOR_RE.match(html))
 
 
 def _pair_inner(text, marker, close):
@@ -289,13 +303,103 @@ def _restore_pair(seg, text):
     return text, restored
 
 
-def restore_literal_pairs(path, chunk):
-    """Re-wrap pair placeholders whose source text survived verbatim.
+def _visible_len(text):
+    """Length of ``text`` without placeholder markers."""
+    return len(markup.PH_RE.sub("", text))
 
-    This is the ``--placeholders`` fallback: deterministic and conservative.
-    Anything ambiguous (translated span, repeated literal, already partially
-    present marker) is left untouched for the translator. Returns a list of
-    ``(segment number, [restored literals])``.
+
+def _visible_index(text, target):
+    """Index where the visible-character count of ``text`` reaches target."""
+    if target <= 0:
+        return 0
+    seen, i = 0, 0
+    while i < len(text):
+        match = markup.PH_RE.match(text, i)
+        if match:
+            i = match.end()
+            continue
+        if seen >= target:
+            return i
+        seen += 1
+        i += 1
+    return len(text)
+
+
+BOUNDARY_CHARS = set(" \t\n\r，。、；：！？“”‘’（）《》〈〉—…·,"
+                     ".!?;:\"'()[]{}<>")
+
+
+def _in_placeholder(text, at):
+    for match in markup.PH_RE.finditer(text):
+        if match.start() < at < match.end():
+            return True
+    return False
+
+
+def _is_boundary(text, at):
+    if at <= 0 or at >= len(text):
+        return True
+    return text[at - 1] in BOUNDARY_CHARS or text[at] in BOUNDARY_CHARS
+
+
+def _safe_insert(text, at):
+    """Move an insertion point out of a word and onto a nearby boundary."""
+    if at <= 0 or at >= len(text):
+        return at
+    before, after = text[at - 1], text[at]
+    if before.isascii() and before.isalnum() \
+            and after.isascii() and after.isalnum():
+        while at < len(text) and text[at].isascii() and text[at].isalnum():
+            at += 1
+        return at
+    if _is_boundary(text, at) and not _in_placeholder(text, at):
+        return at
+    for step in range(1, 9):
+        for candidate in (at + step, at - step):
+            if 0 <= candidate <= len(text) and _is_boundary(text, candidate) \
+                    and not _in_placeholder(text, candidate):
+                return candidate
+    return at
+
+
+def _restore_single_anchors(seg, text):
+    """Approximately re-place invisible single anchors, returning placements.
+
+    The anchor's relative position in the source sentence is applied to the
+    translation. It is a fallback: positions are approximate by design, but
+    pagebreak ids and endnote back-links survive instead of disappearing.
+    """
+    src_visible = _visible_len(seg.text) or 1
+    missing = []
+    for item in seg.items:
+        if item["kind"] != "single" or item["open"] in text:
+            continue
+        if not _invisible_anchor(item):
+            continue
+        at = seg.text.find(item["open"])
+        if at < 0:
+            continue
+        missing.append((_visible_len(seg.text[:at]) / src_visible,
+                        item["open"]))
+    placed = []
+    for ratio, marker in sorted(missing):
+        target = round(ratio * _visible_len(text))
+        at = _safe_insert(text, _visible_index(text, target))
+        text = text[:at] + marker + text[at:]
+        placed.append((marker, ratio))
+    return text, placed
+
+
+def restore_placeholders(path, chunk):
+    """Fallback repair for placeholders the translator dropped.
+
+    Pair markers are re-wrapped only when their source span survived verbatim
+    and occurs exactly once. Invisible single anchors (pagebreaks, empty
+    ``<a id=.../>`` targets) are re-placed at an approximate relative position.
+    Anything else is left for the translator. This is only a safety net: the
+    normal path is the model keeping and repairing its own markers.
+
+    Returns ``[(segment number, [wrapped literals], [placed markers])]``.
     """
     path = Path(path)
     if not path.exists():
@@ -310,11 +414,12 @@ def restore_literal_pairs(path, chunk):
         seg = chunk[num - 1]
         if seg.index - offset + 1 != num:
             continue
-        fixed, restored = _restore_pair(seg, "\n".join(lines[1:]))
-        if not restored:
+        text, wrapped = _restore_pair(seg, "\n".join(lines[1:]))
+        text, placed = _restore_single_anchors(seg, text)
+        if not wrapped and not placed:
             continue
-        block[1] = [lines[0]] + fixed.split("\n")
-        fixes.append((num, restored))
+        block[1] = [lines[0]] + text.split("\n")
+        fixes.append((num, wrapped, placed))
         changed = True
     if changed:
         out = list(preamble)
@@ -625,13 +730,19 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
                 print("  fixed %s chunk %d: removed extra single-marker "
                       "close(s) %s" % (name, ci, detail))
         if placeholders:
-            fixes = restore_literal_pairs(path, chunk)
-            for num, words in fixes:
-                print("  fixed %s chunk %d: auto-wrapped seg %d around %s"
-                      % (name, ci, num,
-                         ", ".join('"%s"' % word for word in words)))
+            fixes = restore_placeholders(path, chunk)
+            for num, wrapped, placed in fixes:
+                if wrapped:
+                    print("  fixed %s chunk %d: auto-wrapped seg %d around %s"
+                          % (name, ci, num,
+                             ", ".join('"%s"' % word for word in wrapped)))
+                if placed:
+                    print("  fixed %s chunk %d: auto-placed seg %d anchor(s) %s"
+                          % (name, ci, num,
+                             ", ".join("%s ~%d%%" % (marker, round(ratio * 100))
+                                       for marker, ratio in placed)))
             if fixes:
-                print("  note: placeholder scope may be approximate; "
+                print("  note: placeholder position may be approximate; "
                       "verify the rendered formatting")
         translated, verbatim, err = parse_translation(path, len(chunk), chunk)
         if err:

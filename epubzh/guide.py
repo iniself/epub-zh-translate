@@ -509,7 +509,8 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             parts.append("- 其余 %d 段同理" % (len(singles) - 20))
         parts.append("")
         parts.append("上面这些标记在原文里没有对应的 `⟦/n⟧`，原样保留即可，"
-                     "不要补闭合标记。")
+                     "不要补闭合标记。页码锚点和脚注回跳锚点不可见、最容易漏，"
+                     "翻译时逐段核对，务必保留。")
         parts.append("")
 
     seen = introduced_for_chunk(cfg, chunk_text, exclude=dst)

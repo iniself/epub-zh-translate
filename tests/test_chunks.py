@@ -6,10 +6,12 @@ from pathlib import Path
 from epubzh import chunks, markup
 
 
-def make_seg(pairs=(), singles=(), text=""):
+def make_seg(pairs=(), singles=(), text="", single_html=None):
     items = [{"kind": "pair", "open": "\u27e6%d\u27e7" % n,
               "close": "\u27e6/%d\u27e7" % n} for n in pairs]
-    items += [{"kind": "single", "open": "\u27e6%d\u27e7" % n}
+    items += [{"kind": "single", "open": "\u27e6%d\u27e7" % n,
+               "close": None,
+               "open_html": (single_html or {}).get(n, "")}
               for n in singles]
     return markup.Segment(0, 0, text, items)
 
@@ -263,14 +265,15 @@ class RestoreLiteralPairsTest(unittest.TestCase):
     def run_case(self, source, translated):
         path = self.tmp / "chunk.txt"
         path.write_text(block(1, translated) + "\n", encoding="utf-8")
-        fixes = chunks.restore_literal_pairs(path, [make_seg(pairs=(1,), text=source)])
+        fixes = chunks.restore_placeholders(
+            path, [make_seg(pairs=(1,), text=source)])
         return fixes, path.read_text(encoding="utf-8")
 
     def test_wraps_a_literal_that_survived(self):
         fixes, text = self.run_case(
             "\u27e61\u27e7Friends\u27e6/1\u27e7",
             "\u4f60\u6628\u665a\u770b\u300a\u53cb\u8c0a\u300b\uff08Friends\uff09\u4e86\u5417\uff1f")
-        self.assertEqual(fixes, [(1, ["Friends"])])
+        self.assertEqual(fixes, [(1, ["Friends"], [])])
         self.assertIn("\uff08\u27e61\u27e7Friends\u27e6/1\u27e7\uff09", text)
 
     def test_leaves_translated_spans_alone(self):
@@ -298,12 +301,57 @@ class RestoreLiteralPairsTest(unittest.TestCase):
             "Friends\u27e6/1\u27e7 \u662f\u53cb\u8c0a")
         self.assertEqual(fixes, [])
 
-    def test_ignores_single_markers(self):
+    def test_ignores_visible_single_markers(self):
         path = self.tmp / "chunk.txt"
         path.write_text(block(1, "\u8bd7\u610f\u7684\u8bdd\u9898") + "\n",
                         encoding="utf-8")
-        seg = make_seg(singles=(1,), text="waxing \u27e61\u27e7poetic")
-        self.assertEqual(chunks.restore_literal_pairs(path, [seg]), [])
+        seg = make_seg(singles=(1,), text="waxing \u27e61\u27e7poetic",
+                       single_html={1: "<br/>"})
+        self.assertEqual(chunks.restore_placeholders(path, [seg]), [])
+
+    def restore_anchors(self, source, translated, html):
+        path = self.tmp / "chunk.txt"
+        path.write_text(block(1, translated) + "\n", encoding="utf-8")
+        seg = make_seg(singles=sorted(html), text=source, single_html=html)
+        fixes = chunks.restore_placeholders(path, [seg])
+        return seg, fixes, path.read_text(encoding="utf-8")
+
+    def test_places_a_dropped_pagebreak_anchor(self):
+        seg, fixes, text = self.restore_anchors(
+            "predict a team\u2019s \u27e60\u27e7success just now",
+            "\u9884\u6d4b\u4e00\u652f\u7403\u961f\u7684\u6210\u529f",
+            {0: '<span epub:type="pagebreak" id="page_7" '
+                'role="doc-pagebreak" title="7"/>'})
+        self.assertEqual(len(fixes[0][2]), 1)
+        translated = text.split("@@@SEG 001@@@\n", 1)[1].strip()
+        self.assertIsNone(seg.check(translated))
+
+    def test_places_a_dropped_endnote_anchor(self):
+        seg, fixes, text = self.restore_anchors(
+            "just by \u27e60\u27e7counting how often",
+            "\u53ea\u9700\u901a\u8fc7\u6570\u6b21\u6570",
+            {0: '<a id="EndnotePhraseInText19"/>'})
+        self.assertEqual(len(fixes[0][2]), 1)
+        translated = text.split("@@@SEG 001@@@\n", 1)[1].strip()
+        self.assertIsNone(seg.check(translated))
+
+    def test_placed_anchors_keep_source_order(self):
+        _seg, fixes, text = self.restore_anchors(
+            "team\u2019s \u27e60\u27e7success just by \u27e61\u27e7counting",
+            "\u7403\u961f\u7684\u6210\u529f\u53ea\u9700\u901a\u8fc7\u6570\u6b21\u6570",
+            {0: '<span epub:type="pagebreak" id="page_7"/>',
+             1: '<a id="EndnotePhraseInText19"/>'})
+        placed = [marker for marker, _ in fixes[0][2]]
+        self.assertEqual(placed, ["\u27e60\u27e7", "\u27e61\u27e7"])
+        self.assertLess(text.index("\u27e60\u27e7"), text.index("\u27e61\u27e7"))
+
+    def test_does_not_split_a_latin_word(self):
+        _seg, _fixes, text = self.restore_anchors(
+            "the NBA \u27e60\u27e7players touch",
+            "NBA \u7403\u5458\u4eec\u4e92\u76f8\u63a5\u89e6",
+            {0: '<span epub:type="pagebreak" id="page_7"/>'})
+        self.assertNotIn("N\u27e60\u27e7BA", text)
+        self.assertNotIn("NB\u27e60\u27e7A", text)
 
 
 if __name__ == "__main__":

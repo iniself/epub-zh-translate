@@ -400,8 +400,10 @@ def build_parser():
                    help="read-only check, do not repair blocks")
     p.add_argument("--placeholders", action="store_true",
                    help="fallback repair: re-wrap pair markers whose source "
-                        "text survived verbatim (run only after the "
-                        "translator failed to restore them)")
+                        "text survived verbatim, and re-place invisible "
+                        "single anchors (pagebreaks, endnote targets) at an "
+                        "approximate position; run only after the translator "
+                        "failed to restore them")
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("next", help="show and write the next chunk prompt")
