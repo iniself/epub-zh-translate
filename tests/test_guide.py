@@ -103,6 +103,13 @@ class ContractTest(unittest.TestCase):
         self.assertIn("需工具兜底", text)
         self.assertIn("不要问用户", text)
 
+    def test_repair_requires_an_edit_before_failure(self):
+        text = contract("repair")
+        self.assertIn("只运行", text)
+        self.assertIn("不算修复", text)
+        self.assertIn("没有编辑过", text)
+        self.assertIn("不得", text)
+
     def test_same_error_stops_after_two_rounds(self):
         text = contract("pending")
         self.assertIn("连续 2 次", text)
