@@ -215,7 +215,8 @@ TOOL="<skill-base>/epubzh-run"
 参数校验失败（例如 `description: Missing key`）时，按报错补齐字段重试一次；仍失败
 就直接在当前会话翻译该块，不要反复试，也不要因为一次调用被拒就整本代劳。
 
-派发子代理用 `subagent`，跑命令用 `shell`；不要用 `execute`/代码执行来代劳。
+本流程不需要 `execute`：派发子代理用 `subagent`，跑命令用 `shell`。
+需要脚本化调用多个工具时仍可用 code mode，但不要拿它代替这两个工具。
 
 ### 继续已有项目（包括小模型）
 
