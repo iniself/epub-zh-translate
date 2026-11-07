@@ -161,8 +161,8 @@ work：/path/to/books/mybook-zh-project/work
 ### 分块翻译（照做，不要自己发明流程）
 
 每个分块 = 一个 subagent = 一次 `write`。主会话只做调度和校验，**不要在主会话里
-直接翻译整块**；唯一例外是同一块已经按看门狗流程失败两次（见下文），这时主会话
-可以直接翻译该块，避免整本书卡死在一块上。
+直接翻译整块**；例外只有两个：同一块已按看门狗流程失败两次（见下文），或
+`subagent` 工具不可用、调用本身失败，这时主会话可以直接翻译该块，避免整本书卡死。
 
 ```bash
 # macOS / Linux
@@ -208,8 +208,14 @@ TOOL="<skill-base>/epubzh-run"
 }
 ```
 
-参数校验失败（例如 `description: Missing key`）时，按报错补齐字段重试，不要因为一次
-调用被拒就改在主会话里翻译整块。
+新建子代理只传 `agent`、`description`、`prompt`，**不要传 `sessionID`**；只有续派
+上一次调用返回的子代理时才原样使用它的 `sessionID`。自己编造 `ses_...` 会报
+`Subagent session not found`。
+
+参数校验失败（例如 `description: Missing key`）时，按报错补齐字段重试一次；仍失败
+就直接在当前会话翻译该块，不要反复试，也不要因为一次调用被拒就整本代劳。
+
+派发子代理用 `subagent`，跑命令用 `shell`；不要用 `execute`/代码执行来代劳。
 
 ### 继续已有项目（包括小模型）
 
