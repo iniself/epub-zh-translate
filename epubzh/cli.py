@@ -229,7 +229,8 @@ def cmd_check(args):
     results = []
     for name in names:
         problems = chunks.check_file(cfg, name, only_chunk=args.chunk,
-                                     fix=args.fix, skip_missing=skip_missing)
+                                     fix=args.fix, skip_missing=skip_missing,
+                                     placeholders=args.placeholders)
         all_problems.extend(problems)
         results.append((name, problems))
     for name, problems in results:
@@ -397,6 +398,10 @@ def build_parser():
                    help="repair duplicate/out-of-range/reordered blocks (default)")
     p.add_argument("--no-fix", dest="fix", action="store_false",
                    help="read-only check, do not repair blocks")
+    p.add_argument("--placeholders", action="store_true",
+                   help="fallback repair: re-wrap pair markers whose source "
+                        "text survived verbatim (run only after the "
+                        "translator failed to restore them)")
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("next", help="show and write the next chunk prompt")

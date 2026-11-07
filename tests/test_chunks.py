@@ -256,5 +256,55 @@ class PlaceholderHintTest(unittest.TestCase):
         self.assertIn("delete extra pairs as a whole", bad)
 
 
+class RestoreLiteralPairsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def run_case(self, source, translated):
+        path = self.tmp / "chunk.txt"
+        path.write_text(block(1, translated) + "\n", encoding="utf-8")
+        fixes = chunks.restore_literal_pairs(path, [make_seg(pairs=(1,), text=source)])
+        return fixes, path.read_text(encoding="utf-8")
+
+    def test_wraps_a_literal_that_survived(self):
+        fixes, text = self.run_case(
+            "\u27e61\u27e7Friends\u27e6/1\u27e7",
+            "\u4f60\u6628\u665a\u770b\u300a\u53cb\u8c0a\u300b\uff08Friends\uff09\u4e86\u5417\uff1f")
+        self.assertEqual(fixes, [(1, ["Friends"])])
+        self.assertIn("\uff08\u27e61\u27e7Friends\u27e6/1\u27e7\uff09", text)
+
+    def test_leaves_translated_spans_alone(self):
+        fixes, text = self.run_case(
+            "waxing \u27e61\u27e7poetic\u27e6/1\u27e7 about",
+            "\u8c08\u7740\u8bd7\u610f\u7684\u8bdd\u9898")
+        self.assertEqual(fixes, [])
+        self.assertNotIn("\u27e61\u27e7", text)
+
+    def test_skips_ambiguous_repeated_literals(self):
+        fixes, _ = self.run_case(
+            "\u27e61\u27e7Friends\u27e6/1\u27e7",
+            "Friends \u548c Friends \u90fd\u662f\u670b\u53cb")
+        self.assertEqual(fixes, [])
+
+    def test_respects_word_boundaries(self):
+        fixes, _ = self.run_case(
+            "\u27e61\u27e7Friends\u27e6/1\u27e7",
+            "Friendship \u662f\u53cb\u8c0a")
+        self.assertEqual(fixes, [])
+
+    def test_skips_when_a_marker_is_partially_present(self):
+        fixes, _ = self.run_case(
+            "\u27e61\u27e7Friends\u27e6/1\u27e7",
+            "Friends\u27e6/1\u27e7 \u662f\u53cb\u8c0a")
+        self.assertEqual(fixes, [])
+
+    def test_ignores_single_markers(self):
+        path = self.tmp / "chunk.txt"
+        path.write_text(block(1, "\u8bd7\u610f\u7684\u8bdd\u9898") + "\n",
+                        encoding="utf-8")
+        seg = make_seg(singles=(1,), text="waxing \u27e61\u27e7poetic")
+        self.assertEqual(chunks.restore_literal_pairs(path, [seg]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

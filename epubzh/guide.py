@@ -372,9 +372,10 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
             "   identical / 找不到 / 多处匹配时不要重试，直接 `write` 覆盖整个分块。"
         )
 
-    step3 = ("3. 写完后运行自检（`--fix` 会自动处理重复段、越界段和段号排序）："
+    step3 = ("3. 写完后运行自检（`--fix` 只处理重复段、越界段、段号排序和多余的"
+             "单标记闭标记；**缺失的占位符不会被补回**）："
              if state in ("pending", "partial") else
-             "3. 自检命令（`--fix` 会自动处理重复段、越界段和段号排序）：")
+             "3. 自检命令（同上：`--fix` 不补缺失的占位符）：")
 
     return """## 执行契约
 
@@ -387,7 +388,8 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
    - 占位符按原文照抄；`extra` 里的标记删掉，成对的多余标记整对删除。
    - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
      保留，并在段内单独加一行 `@@@VERBATIM@@@`。
-5. 同一段同一个错误连续 2 次仍出现就停下，回复一行 `失败：<段号 + 原因>`。
+5. 同一段同一个占位符错误连续 2 次仍出现就停下，不要重写整块，也不要问用户，
+   回复一行 `失败：占位符，需工具兜底`。
    同一分块最多 3 轮自检，仍不过就回复一行 `失败：<原因>` 并结束。
 6. 完成后只回复一行：`已写入 %s；check OK`
 """ % (first, second, step3, check_cmd, dst)
@@ -396,8 +398,9 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
 def _opening(state, chunk, last):
     """State-aware first action, so recovery prompts do not contradict."""
     if state == "repair":
-        return ("**立即开始：先运行 `check --chunk %d --fix` 查看并修复现有译文；"
-                "文件已有完整译文，不要整块重写。**" % chunk)
+        return ("**立即开始：先运行 `check --chunk %d --fix` 查看现有译文；"
+                "它只修段号、重复段和多余闭标记，不会补缺失的占位符。然后按"
+                "提示词列出的待修复段补回标记，不要整块重写。**" % chunk)
     if state == "partial":
         return ("**立即开始：读完输入文件后先 `read` 输出文件末尾，确认最后一段"
                 "编号 %d，再从下一段继续追加。**" % last)
@@ -451,6 +454,19 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     parts.append("")
     parts.append(_opening(state, chunk, last))
     parts.append("")
+
+    if state in ("repair", "broken"):
+        problems = chunks.check_file(cfg, name, only_chunk=chunk, fix=False)
+        if problems:
+            parts.append("## 本块自检结果（--fix 处理不了这些）")
+            parts.append("")
+            for problem in problems:
+                parts.append("- %s" % problem.replace("\n", "\n  "))
+            parts.append("")
+            parts.append("只改上面点名的段：按原文把缺失的 `⟦n⟧` / `⟦/n⟧` 插回"
+                         "对应译文的位置，多余的标记删掉。`--fix` 只处理段号、"
+                         "重复段和多余闭标记，重复运行不会消除这些错误。")
+            parts.append("")
 
     if use_full:
         parts.append("## 翻译规范（完整，请逐条执行）")
@@ -580,9 +596,11 @@ def _build_brief_prompt(cfg, name, chunk, index):
         "   编号每段独立，不同段可以都从 `⟦0⟧` 开始。",
         "2. 整段是代码、命令、日志、URL：原文照抄，并在段内加一行 "
         "`@@@VERBATIM@@@`。",
-        "3. 不用自己核对标记。写完运行：",
+        "3. 写完运行下面的命令，按报错逐段修；缺失的占位符要照原文补回，"
+        "`--fix` 不会自动补：",
         "   `%s`" % check_cmd,
-        "   报错只改报错的那一段，最多两轮。",
+        "   报错只改报错的那一段，最多两轮；仍不过就回复 "
+        "`失败：占位符，需工具兜底`。",
         "4. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
         % dst,
     ]) + "\n"

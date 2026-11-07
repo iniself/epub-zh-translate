@@ -90,6 +90,19 @@ class ContractTest(unittest.TestCase):
             self.assertNotIn("提交前自检", text)
             self.assertIn("check", text)
 
+    def test_repair_contract_says_fix_cannot_restore_placeholders(self):
+        text = contract("repair")
+        self.assertIn("不补缺失的占位符", text)
+
+    def test_repair_opening_says_fix_cannot_restore_placeholders(self):
+        text = guide._opening("repair", 1, 0)
+        self.assertIn("不会补缺失的占位符", text)
+
+    def test_placeholder_escalation_names_the_tool_fallback(self):
+        text = contract("repair")
+        self.assertIn("需工具兜底", text)
+        self.assertIn("不要问用户", text)
+
     def test_same_error_stops_after_two_rounds(self):
         text = contract("pending")
         self.assertIn("连续 2 次", text)

@@ -219,6 +219,111 @@ def _remove_extra_single_closes(lines, seg):
     return [lines[0]] + (body.split("\n") if body else []), removed
 
 
+LITERAL_SPAN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .,'’&:!?()/+\-]*$")
+
+
+def _pair_inner(text, marker, close):
+    """Text between a pair of placeholders in the source segment."""
+    start = text.find(marker)
+    if start < 0:
+        return ""
+    end = text.find(close, start + len(marker))
+    if end < 0:
+        return ""
+    inner = text[start + len(marker):end].strip()
+    if markup.PLACEHOLDER_OPEN in inner:
+        return ""
+    return inner
+
+
+def _word_bounded(text, start, end, inner):
+    if inner[:1].isalnum() and start and text[start - 1].isalnum():
+        return False
+    if inner[-1:].isalnum() and end < len(text) and text[end].isalnum():
+        return False
+    return True
+
+
+def _literal_span(text, inner):
+    """Offset of a unique, word-bounded occurrence of ``inner`` in ``text``."""
+    if len(inner) < 2 or not LITERAL_SPAN_RE.match(inner) \
+            or not re.search("[A-Za-z]", inner):
+        return None
+    hits, start = [], 0
+    while True:
+        at = text.find(inner, start)
+        if at < 0:
+            break
+        if _word_bounded(text, at, at + len(inner), inner):
+            hits.append(at)
+        start = at + 1
+    return hits[0] if len(hits) == 1 else None
+
+
+def _restore_pair(seg, text):
+    """Wrap source spans that survived verbatim, returning (text, literals).
+
+    Fallback only: the source span must be a Latin run that appears exactly
+    once in the translation, so the insertion point is unambiguous. The
+    resulting marker scope can still be approximate (an italic span around
+    ``Friends`` will not cover a translated title), which is why this is not
+    the default repair.
+    """
+    restored = []
+    used = set()
+    for item in seg.items:
+        if item["kind"] != "pair":
+            continue
+        if item["open"] in text or item["close"] in text:
+            continue
+        inner = _pair_inner(seg.text, item["open"], item["close"])
+        if not inner or inner in used:
+            continue
+        at = _literal_span(text, inner)
+        if at is None:
+            continue
+        text = (text[:at] + item["open"] + text[at:at + len(inner)]
+                + item["close"] + text[at + len(inner):])
+        restored.append(inner)
+        used.add(inner)
+    return text, restored
+
+
+def restore_literal_pairs(path, chunk):
+    """Re-wrap pair placeholders whose source text survived verbatim.
+
+    This is the ``--placeholders`` fallback: deterministic and conservative.
+    Anything ambiguous (translated span, repeated literal, already partially
+    present marker) is left untouched for the translator. Returns a list of
+    ``(segment number, [restored literals])``.
+    """
+    path = Path(path)
+    if not path.exists():
+        return []
+    preamble, blocks = _split_blocks(path)
+    offset = chunk[0].index
+    fixes, changed = [], False
+    for block in blocks:
+        num, lines = block
+        if not 1 <= num <= len(chunk):
+            continue
+        seg = chunk[num - 1]
+        if seg.index - offset + 1 != num:
+            continue
+        fixed, restored = _restore_pair(seg, "\n".join(lines[1:]))
+        if not restored:
+            continue
+        block[1] = [lines[0]] + fixed.split("\n")
+        fixes.append((num, restored))
+        changed = True
+    if changed:
+        out = list(preamble)
+        for _, lines in blocks:
+            out.extend(lines)
+        path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+    return fixes
+
+
 def repair_chunk(path, chunk):
     """Repair mechanically invalid segment blocks in a translation file.
 
@@ -455,7 +560,8 @@ def _looks_translatable(body):
     return True
 
 
-def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False):
+def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
+               placeholders=False):
     """Check translated chunks of one source file. Returns problems.
 
     ``only_chunk`` restricts validation to a single chunk, so a translator
@@ -465,7 +571,9 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False):
     ``fix`` (default on) first removes duplicate segment blocks produced by a
     bad append boundary, and extra closing markers for single placeholders.
     Ambiguous duplicates are reported instead of guessed at. Pass ``fix=False``
-    for a read-only check.
+    for a read-only check. ``placeholders`` additionally re-wraps pair markers
+    whose source text survived verbatim; it is a fallback for ``--fix``, which
+    cannot restore missing placeholders on its own.
     """
     index = read_index(cfg)
     if name not in index:
@@ -516,6 +624,15 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False):
                     for num, markers in report.placeholders)
                 print("  fixed %s chunk %d: removed extra single-marker "
                       "close(s) %s" % (name, ci, detail))
+        if placeholders:
+            fixes = restore_literal_pairs(path, chunk)
+            for num, words in fixes:
+                print("  fixed %s chunk %d: auto-wrapped seg %d around %s"
+                      % (name, ci, num,
+                         ", ".join('"%s"' % word for word in words)))
+            if fixes:
+                print("  note: placeholder scope may be approximate; "
+                      "verify the rendered formatting")
         translated, verbatim, err = parse_translation(path, len(chunk), chunk)
         if err:
             problems.append("%s chunk %d: %s" % (name, ci, err))
