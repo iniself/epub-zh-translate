@@ -170,6 +170,20 @@ TOOL="<skill-base>/epubzh-run"
 "$TOOL" prompt <stem> --chunk <n> --brief
 ```
 
+如果客户端提供 `subagent` 工具，派发分块时按下面的形状传参。`description` 是必填的
+3–5 词标签，漏掉会被工具直接拒绝：
+
+```json
+{
+  "agent": "general",
+  "description": "Translate chunk 001",
+  "prompt": "Read <work/prompts/...>.md and perform the translation. Save the result to <work/zh/...>.txt. Follow the prompt file exactly; handle only this chunk."
+}
+```
+
+参数校验失败（例如 `description: Missing key`）时，按报错补齐字段重试，不要因为一次
+调用被拒就改在主会话里翻译整块。
+
 ### 继续已有项目（包括小模型）
 
 用户只给项目目录时，不要自己重新规划整本书，也不要先跑全项目管理命令。按这个循环走：
@@ -204,6 +218,8 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 - 分块提示词必须用 `prompt` 生成，不要自己拼；`large` 带完整规范，其余档位带规则卡 +
   本块术语 + 上文；`--brief` 生成极简版，只用于空转兜底。
 - 一个 subagent 只做一个分块，不要让它顺手翻译别的分块。
+- 派发 subagent 时必须带 `description`（3–5 词）和 `prompt`；漏字段会被工具拒绝，
+  按报错补齐后重试，不要退回主会话翻译。
 - 子代理如果反复说“我将翻译”“Actually, I'll just translate it”却不动手，说明它没有按
   提示词执行：不要重发长提示词，按“主会话看门狗”第 2 条改用 `--brief`。
 - 继续已有项目时，第一条命令是 `next`，不是 `status`，更不是项目级 `check`。`next`
