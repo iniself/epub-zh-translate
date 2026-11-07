@@ -35,6 +35,13 @@ def _source_candidates(base, value, cfg_path, output_abs):
     return out
 
 
+def _hint_lines(tool, config_path):
+    """Return follow-up commands with a shell-safe config path."""
+    config_hint = guide.quote_path(config_path)
+    return ["%s extract --config %s" % (tool, config_hint),
+            "%s guide   --config %s" % (tool, config_hint)]
+
+
 def cmd_init(args):
     base = Path(args.base).expanduser().resolve() if args.base else Path.cwd()
     if not args.base:
@@ -104,19 +111,18 @@ def cmd_init(args):
     if os.name == "nt":
         wrapper = wrapper.with_name(wrapper.name + ".cmd")
     if wrapper.exists():
-        tool = str(wrapper)
+        tool = guide.quote_path(wrapper)
         if os.name == "nt":
-            tool = "& %s" % guide.quote_path(wrapper)
+            tool = "& " + tool
     else:
         tool = guide._module_cmd(cfg) if os.name == "nt" else "python3 -m epubzh"
     print("\ncreated %s (profile: %s, %d words per chunk%s)"
           % (cfg_path, profile, cfg.words_per_chunk,
              ", max %d segments" % cfg.max_segments_per_chunk
              if cfg.max_segments_per_chunk else ", no segment cap"))
-    config_hint = guide.quote_path(cfg_path) if os.name == "nt" else str(cfg_path)
     print("next:")
-    print("  %s extract --config %s" % (tool, config_hint))
-    print("  %s guide   --config %s" % (tool, config_hint))
+    for line in _hint_lines(tool, cfg_path):
+        print("  %s" % line)
     print("  edit %s" % cfg.terms_tsv)
 
 

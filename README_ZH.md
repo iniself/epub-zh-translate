@@ -173,6 +173,9 @@ chmod +x <skills-dir>/epub-zh-translate/epubzh-run
 `源文件`、`中文书名`、`输出` 为必填；`原书名` 和 `作者` 建议填写。
 `项目目录` 可选；不填时会按输出文件推导。agent 会先复述参数，得到确认后再开始。
 
+输出文件名可以包含空格、括号和中文，agent 会自动加引号；为了更稳，建议只用中文、
+字母、数字、`-`、`_`。
+
 你不需要手动运行任何命令行工具。agent 会在内部执行 `init`、`extract`、
 `guide`、`check`、`build` 和 `verify`。Windows 下调用方式完全相同，agent 会
 自动使用 `epubzh-run.cmd`，不需要 WSL。

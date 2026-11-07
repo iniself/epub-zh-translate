@@ -130,6 +130,10 @@ derived from the output path. `Chunk profile` is optional and defaults to
 `large`; see below. The agent will repeat the parameters and wait for
 confirmation before starting.
 
+Output filenames may contain spaces, parentheses, and Chinese characters; the
+agent quotes them automatically. Simple names using Chinese, letters, digits,
+`-`, and `_` are the most portable.
+
 ### Chunk profiles
 
 The profile decides how much text one chunk holds. Choose before `extract`;
