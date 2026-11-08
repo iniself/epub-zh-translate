@@ -103,9 +103,10 @@ class ContractTest(unittest.TestCase):
         text = guide._opening("repair", 1, 0)
         self.assertIn("不会补缺失的占位符", text)
 
-    def test_placeholder_escalation_names_the_tool_fallback(self):
+    def test_placeholder_escalation_only_for_placeholder_errors(self):
         text = contract("repair")
-        self.assertIn("需工具兜底", text)
+        self.assertIn("--placeholders", text)
+        self.assertIn("其它错误", text)
         self.assertIn("不要问用户", text)
 
     def test_repair_requires_an_edit_before_failure(self):
@@ -115,10 +116,11 @@ class ContractTest(unittest.TestCase):
         self.assertIn("没有编辑过", text)
         self.assertIn("不得", text)
 
-    def test_same_error_stops_after_two_rounds(self):
+    def test_chunk_rounds_are_capped_at_three(self):
         text = contract("pending")
-        self.assertIn("连续 2 次", text)
-        self.assertIn("就停下", text)
+        self.assertIn("最多 3 轮", text)
+        self.assertIn("连续 2 轮", text)
+        self.assertIn("失败：<原因>", text)
 
 
 class RefreshGuideTest(unittest.TestCase):

@@ -147,13 +147,15 @@ Building on the content summarization techniques from chapter 3, this chapter gu
 - 报 `segment markers` 且仍缺段时，按报错给出的 `insert between ... and ...`
   在指定位置插入，不要追加到文件末尾。
 - 报 `kept the last copy of ambiguous seg N` 时，检查这一段；不确定就只重写这一段。
-- 报 `placeholder mismatch` / `placeholder order mismatch` / `stray placeholder` /
-  `missing space`：只改报错的那一段，不要通读或重写整块。占位符类错误会给出完整
+- 报 `placeholder mismatch` / `placeholder order mismatch` / `stray placeholder`：
+  只改报错的那一段，不要通读或重写整块。占位符类错误会给出完整
   原文和译文；按原文照抄标记，原文没有的闭合标记删掉，多余的一对整对删除。
+- 中英文之间的空格由 `--fix` 自动补齐，构建时也会再规范化一次，不需要手工处理。
 - 报 `not translated`：先判断这段是否真的需要翻译。人名、机构、地址、代码、URL、
   应保留原文的标题等，原样保留，并在该段内单独加一行 `@@@VERBATIM@@@`（段首或
   段尾都可以）；确实需要翻译的，只改报错的这一段。
 - `edit` 返回 identical、找不到 oldString 或多处匹配：不要重试，直接 `write`
   覆盖整个分块。
-- 同一段同一个错误连续 2 次自检仍出现，停止修改并回复失败原因；同一分块最多
-  3 轮自检，仍不过就回复一行失败原因并结束。
+- 同一分块最多 3 轮“编辑 + 自检”（按分块计，不按单条报错计）。只有同一段同一个
+  占位符错误连续 2 轮仍在，才用 `--placeholders` 兜底一次；其它错误不要用它。
+  3 轮仍不过就回复一行 `失败：<原因>` 并结束。

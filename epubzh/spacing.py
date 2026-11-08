@@ -7,6 +7,11 @@ from . import markup
 CJK = "\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3005\u3007"
 ASCII = "0-9A-Za-z"
 
+# A full placeholder marker, kept as one unit so spacing never rewrites it.
+MARKER_SPLIT_RE = re.compile(
+    "(" + markup.PLACEHOLDER_OPEN + "[^" + markup.PLACEHOLDER_CLOSE + "]*"
+    + markup.PLACEHOLDER_CLOSE + ")")
+
 
 def _parse(raw):
     m = markup.TAGNAME_RE.match(raw)
@@ -90,7 +95,18 @@ def spacing(work, protect_tags=None):
     return "".join(p[1] for p in pieces)
 
 
-def has_missing_space(text):
-    """Return matches where CJK and Latin touch without a space."""
-    body = markup.PH_RE.sub(" ", text)
-    return re.findall("[A-Za-z0-9][\u4e00-\u9fff]|[\u4e00-\u9fff][A-Za-z0-9]", body)
+def fix_text(text):
+    """Insert half-width spaces between CJK and Latin runs.
+
+    Placeholder markers are never split or rewritten, so a translation file
+    stays parseable. Returns ``(fixed_text, inserted_space_count)``.
+    """
+    parts = MARKER_SPLIT_RE.split(text)
+    inserted = 0
+    for i in range(0, len(parts), 2):
+        original = parts[i]
+        fixed = re.sub("([" + CJK + "])([" + ASCII + "])", "\\1 \\2", original)
+        fixed = re.sub("([" + ASCII + "])([" + CJK + "])", "\\1 \\2", fixed)
+        inserted += len(fixed) - len(original)
+        parts[i] = fixed
+    return "".join(parts), inserted

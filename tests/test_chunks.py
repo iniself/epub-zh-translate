@@ -1,9 +1,12 @@
 """Regression tests for the chunk repair and untranslated-text heuristics."""
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
-from epubzh import chunks, markup
+from epubzh import chunks, markup, spacing
 
 
 def make_seg(pairs=(), singles=(), text="", single_html=None):
@@ -368,6 +371,67 @@ class RestoreLiteralPairsTest(unittest.TestCase):
             {0: '<span epub:type="pagebreak" id="page_7"/>'})
         self.assertNotIn("N\u27e60\u27e7BA", text)
         self.assertNotIn("NB\u27e60\u27e7A", text)
+
+
+class SpacingRepairTest(unittest.TestCase):
+    def test_fix_text_inserts_spaces_without_touching_markers(self):
+        text, count = spacing.fix_text("第3章Vibe⟦0⟧中文a")
+        self.assertEqual(text, "第 3 章 Vibe⟦0⟧中文 a")
+        self.assertEqual(count, 4)
+
+    def test_fix_text_is_idempotent(self):
+        text = "第 3 章 Vibe"
+        self.assertEqual(spacing.fix_text(text), (text, 0))
+
+    def test_repair_chunk_spaces_inline_segments(self):
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text(block(1, "第3章Vibe") + "\n", encoding="utf-8")
+        report = chunks.repair_chunk(path, [make_seg(text="ch3 vibe")])
+        self.assertEqual(report.spaced, [(1, 3)])
+        self.assertEqual(path.read_text(encoding="utf-8").strip(),
+                         "@@@SEG 001@@@\n第 3 章 Vibe")
+
+    def test_repair_chunk_leaves_verbatim_segments_alone(self):
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text(block(1, "@@@VERBATIM@@@\n第3章") + "\n",
+                        encoding="utf-8")
+        report = chunks.repair_chunk(path, [make_seg(text="ch3")])
+        self.assertEqual(report.spaced, [])
+        self.assertIn("第3章", path.read_text(encoding="utf-8"))
+
+    def test_repair_chunk_leaves_aligned_files_alone(self):
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text("@@@SEG 001@@@\n@@@TEXT@@@\n第3章\n"
+                        "@@@SPAN 0@@@\nch3\n", encoding="utf-8")
+        report = chunks.repair_chunk(path, [make_seg(text="ch3")])
+        self.assertEqual(report.spaced, [])
+        self.assertIn("第3章", path.read_text(encoding="utf-8"))
+
+
+class CheckFileSpacingTest(unittest.TestCase):
+    def test_check_fixes_spacing_without_reporting_a_problem(self):
+        root = Path(tempfile.mkdtemp())
+        src_dir = root / "src"
+        text_dir = Path("OEBPS")
+        (src_dir / text_dir).mkdir(parents=True)
+        source = src_dir / text_dir / "c.xhtml"
+        source.write_text("<p>Hello 1 world</p>\n", encoding="utf-8")
+        index = {"c.xhtml": {"chunks": 1,
+                             "sha256": hashlib.sha256(
+                                 source.read_bytes()).hexdigest()}}
+        (root / "index.json").write_text(json.dumps(index), encoding="utf-8")
+        zh_dir = root / "zh"
+        zh_dir.mkdir()
+        (zh_dir / "c.01.txt").write_text("@@@SEG 001@@@\n第1章\n",
+                                         encoding="utf-8")
+        cfg = SimpleNamespace(
+            index_file=root / "index.json", source_dir=src_dir,
+            text_dir=text_dir, protect_blocks=[], require_latin=False,
+            words_per_chunk=1200, max_segments_per_chunk=40, zh_dir=zh_dir,
+            mode=None, spacing=True)
+        self.assertEqual(chunks.check_file(cfg, "c.xhtml", only_chunk=1), [])
+        self.assertIn("第 1 章",
+                      (zh_dir / "c.01.txt").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

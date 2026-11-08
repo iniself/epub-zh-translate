@@ -390,7 +390,8 @@ def _aligned_contract(cfg, stem, chunk, dst, state, last, nseg):
 %s
 
 %s
-3. 写完后运行自检（`--fix` 只处理段号、重复段、越界段和排序，**不会补 SPAN**）：
+3. 写完后运行自检（`--fix` 只处理段号、重复段、越界段、排序、多余闭标记和
+   中英文空格，**不会补 SPAN**）：
    `%s`
 4. 自检报错时只改报错的那一段，改完再跑一次：
    - `SPAN k text does not appear verbatim in TEXT`：把第 k 个 SPAN 改成 TEXT 里
@@ -401,9 +402,9 @@ def _aligned_contract(cfg, stem, chunk, dst, state, last, nseg):
    - `source nesting cannot be reproduced`：保持原文区间的顺序和嵌套，不要移动区间。
    - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
      保留，并在段内单独加一行 `@@@VERBATIM@@@`。
-5. 同一段同一个错误在编辑后连续 2 次仍出现就停下，不要重写整块，也不要问用户，
-   回复一行 `失败：对齐，需工具兜底`。
-   同一分块最多 3 轮“编辑 + 自检”，仍不过就回复一行 `失败：<原因>` 并结束。
+5. 同一分块最多 3 轮“编辑 + 自检”（按分块计，不按单条报错计）。aligned 模式
+   没有 `--placeholders` 兜底，只能改 TEXT 或 SPAN；不要问用户，3 轮仍不过就
+   回复一行 `失败：<原因>` 并结束。
 6. 完成后只回复一行：`已写入 %s；check OK`
 """ % (first, second, check_cmd, dst)
 
@@ -493,8 +494,8 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
             "   identical / 找不到 / 多处匹配时不要重试，直接 `write` 覆盖整个分块。"
         )
 
-    step3 = ("3. 写完后运行自检（`--fix` 只处理重复段、越界段、段号排序和多余的"
-             "单标记闭标记；**缺失的占位符不会被补回**）："
+    step3 = ("3. 写完后运行自检（`--fix` 只处理重复段、越界段、段号排序、多余的"
+             "单标记闭标记和中英文空格；**缺失的占位符不会被补回**）："
              if state in ("pending", "partial") else
              "3. 自检命令（同上：`--fix` 不补缺失的占位符）：")
 
@@ -511,9 +512,9 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
      把闭标记移回该区间译文之后，保持原文的嵌套关系。
    - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
      保留，并在段内单独加一行 `@@@VERBATIM@@@`。
-5. 同一段同一个占位符错误在编辑后连续 2 次仍出现就停下，不要重写整块，也不要问用户，
-   回复一行 `失败：占位符，需工具兜底`。
-   同一分块最多 3 轮“编辑 + 自检”，仍不过就回复一行 `失败：<原因>` 并结束。
+5. 同一分块最多 3 轮“编辑 + 自检”（按分块计，不按单条报错计）。只有同一段
+   同一个占位符错误连续 2 轮仍在，才追加 `--placeholders` 兜底一次；其它错误
+   不要用它，也不要问用户。3 轮仍不过就回复一行 `失败：<原因>` 并结束。
 6. 完成后只回复一行：`已写入 %s；check OK`
 """ % (first, second, step3, check_cmd, dst)
 
@@ -541,7 +542,7 @@ def _chunk_prompt_state(cfg, filename, chunk, nseg):
     """Numbering state plus a content check for completed chunk files.
 
     ``chunk_state`` only looks at segment numbers. A file can have all
-    segments and still fail placeholder/spacing checks; that is a ``repair``
+    segments and still fail a placeholder check; that is a ``repair``
     job, not a fresh translation. Telling a model to "write the whole chunk"
     in that case destroys good work and restarts the loop.
     """
@@ -750,9 +751,9 @@ def _build_brief_prompt(cfg, name, chunk, index):
             "3. 区间顺序和嵌套与原文一致。",
             "4. 整段是代码、命令、日志、URL：原文照抄，并在段内加一行 "
             "`@@@VERBATIM@@@`。",
-            "5. 写完运行下面的命令，按报错逐段修；最多两轮，只跑 `--fix` 不算修复：",
+            "5. 写完运行下面的命令，按报错逐段修；只跑 `--fix` 不算修复：",
             "   `%s`" % check_cmd,
-            "   仍不过就回复 `失败：对齐，需工具兜底`。",
+            "   同一分块最多 3 轮；仍不过就回复 `失败：<原因>`。",
             "6. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
             % dst,
         ]) + "\n"
@@ -780,9 +781,10 @@ def _build_brief_prompt(cfg, name, chunk, index):
         "3. 写完运行下面的命令，按报错逐段修；缺失的占位符要照原文补回，"
         "`--fix` 不会自动补：",
         "   `%s`" % check_cmd,
-        "   报错只改报错的那一段，最多两轮；只跑 `--fix` 不算修复，没有编辑过"
+        "   报错只改报错的那一段，最多 3 轮；只跑 `--fix` 不算修复，没有编辑过"
         "不许回复失败；",
-        "   仍不过就回复 `失败：占位符，需工具兜底`。",
+        "   只有占位符错误连续两轮仍在才加 `--placeholders`，仍不过就回复"
+        " `失败：<原因>`。",
         "4. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
         % dst,
     ]) + "\n"

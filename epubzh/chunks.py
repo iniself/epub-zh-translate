@@ -63,7 +63,7 @@ def load_marked(path):
     A `@@@VERBATIM@@@` line anywhere inside a segment body marks text the
     translator deliberately kept in the source language (code, commands,
     listing output, names, addresses). It is checked for placeholders like any
-    other segment but is exempt from the "not translated" and spacing rules.
+    other segment but is exempt from the "not translated" rule.
     The marker line itself is not part of the visible text.
     """
     raw = Path(path).read_text(encoding="utf-8")
@@ -190,7 +190,8 @@ def _block_body(lines):
 
 
 RepairReport = namedtuple("RepairReport",
-                          "removed dropped reordered ambiguous placeholders")
+                          "removed dropped reordered ambiguous placeholders "
+                          "spaced")
 
 
 def _remove_extra_single_closes(lines, seg):
@@ -458,14 +459,17 @@ def repair_chunk(path, chunk):
         valid) and reported as ambiguous;
     * remaining blocks are sorted by segment number when out of order;
     * an extra ``⟦/n⟧`` for a single ``⟦n⟧`` is removed (the source has no
-      closing marker, so this is unambiguous).
+      closing marker, so this is unambiguous);
+    * CJK/Latin boundaries get a half-width space, matching what ``build``
+      would normalise anyway. Aligned files are left alone because rewriting
+      TEXT would desynchronise its SPAN sections.
 
     Missing segments are not invented; ``parse_translation`` reports where
     they belong. Returns a ``RepairReport``.
     """
     path = Path(path)
     if not path.exists():
-        return RepairReport([], [], False, [], [])
+        return RepairReport([], [], False, [], [], [])
     aligned = is_aligned_file(path)
     preamble, blocks = _split_blocks(path)
     drop = set()
@@ -526,14 +530,33 @@ def repair_chunk(path, chunk):
                 block[1] = fixed
                 placeholder_fixes.append((num, markers))
 
-    if drop or reordered or placeholder_fixes:
+    spaced = []
+    if not aligned:
+        # The build normalises CJK/Latin spacing anyway. Doing it here keeps
+        # the work file clean without turning a typography detail into a
+        # retry loop for the translator.
+        for block in kept:
+            num, lines = block
+            if any(VERBATIM_RE.match(line.strip()) for line in lines[1:]):
+                continue
+            total = 0
+            out = [lines[0]]
+            for line in lines[1:]:
+                fixed, count = spacing.fix_text(line)
+                total += count
+                out.append(fixed)
+            if total:
+                block[1] = out
+                spaced.append((num, total))
+
+    if drop or reordered or placeholder_fixes or spaced:
         out = list(preamble)
         for _, lines in kept:
             out.extend(lines)
         path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 
     return RepairReport(removed, sorted(set(dropped)), reordered, ambiguous,
-                        placeholder_fixes)
+                        placeholder_fixes, spaced)
 
 
 def _marker_number(marker):
@@ -965,11 +988,12 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
     ``skip_missing`` omits chunks that have not been started yet; project-wide
     checks use it so expected missing files do not drown out real errors.
     ``fix`` (default on) first removes duplicate segment blocks produced by a
-    bad append boundary, and extra closing markers for single placeholders.
-    Ambiguous duplicates are reported instead of guessed at. Pass ``fix=False``
-    for a read-only check. ``placeholders`` additionally re-wraps pair markers
-    whose source text survived verbatim; it is a fallback for ``--fix``, which
-    cannot restore missing placeholders on its own.
+    bad append boundary, extra closing markers for single placeholders, and
+    CJK/Latin spacing gaps. Ambiguous duplicates are reported instead of
+    guessed at. Pass ``fix=False`` for a read-only check. ``placeholders``
+    additionally re-wraps pair markers whose source text survived verbatim; it
+    is a fallback for ``--fix``, which cannot restore missing placeholders on
+    its own.
     """
     index = read_index(cfg)
     if name not in index:
@@ -1020,6 +1044,11 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
                     for num, markers in report.placeholders)
                 print("  fixed %s chunk %d: removed extra single-marker "
                       "close(s) %s" % (name, ci, detail))
+            if report.spaced:
+                detail = ", ".join("seg %d (+%d)" % (num, count)
+                                   for num, count in report.spaced)
+                print("  fixed %s chunk %d: inserted CJK/Latin space(s) %s"
+                      % (name, ci, detail))
         if placeholders:
             fixes = restore_placeholders(path, chunk)
             for num, wrapped, placed in fixes:
@@ -1067,10 +1096,4 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
                     "source language, add a separate @@@VERBATIM@@@ line in "
                     "this segment)%s"
                     % (name, ci, pos, width, _context(seg, text)))
-            missing = spacing.has_missing_space(text)
-            if missing:
-                problems.append("%s chunk %d seg %d/%d: missing space around Latin, "
-                                "e.g. %s%s"
-                                % (name, ci, pos, width, missing[:3],
-                                   _context(seg, text)))
     return problems
