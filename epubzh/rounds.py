@@ -23,7 +23,6 @@ from pathlib import Path
 
 FILENAME = "check_state.json"
 MAX_ROUNDS = 6
-MAX_STALLED = 1
 MAX_IDLE = 2
 
 
@@ -117,25 +116,23 @@ def update(cfg, name, ci, chunk_path, problems):
         data.pop(key, None)
         write(cfg, data)
         return {"rounds": rounds, "problems": 0, "exhausted": False,
-                "stalled": 0, "idle": 0, "changed": changed,
+                "idle": 0, "changed": changed,
                 "fallback": bool(previous.get("fallback")),
                 "forced": bool(previous.get("forced")),
                 "fallback_ready": False}
     last = previous.get("last_problems")
-    stalled = int(previous.get("stalled", 0))
-    if changed:
-        stalled = 0 if last is None or count < last else stalled + 1
     forced = bool(previous.get("forced"))
-    stalled_out = changed and rounds >= 2 and stalled >= MAX_STALLED
-    fallback_ready = forced or rounds >= MAX_ROUNDS or stalled_out
+    no_progress = changed and last is not None and count >= last
+    failed_attempt = no_progress and rounds >= 2
+    fallback_ready = forced or rounds >= MAX_ROUNDS or failed_attempt
     exhausted = (bool(previous.get("exhausted")) or forced
-                 or rounds >= MAX_ROUNDS or stalled_out or idle >= MAX_IDLE)
+                 or rounds >= MAX_ROUNDS or failed_attempt
+                 or idle >= MAX_IDLE)
     state = {
         "rounds": rounds,
         "problems": count,
         "last_problems": count,
         "last_sha": sha,
-        "stalled": stalled,
         "idle": idle,
         "changed": changed,
         "fallback": bool(previous.get("fallback")),

@@ -35,7 +35,6 @@ class RoundsTest(unittest.TestCase):
         self.update(["p"])
         self.write("b")
         state = self.update(["p"])
-        self.assertEqual(state["stalled"], 1)
         self.assertTrue(state["exhausted"])
         self.assertTrue(state["fallback_ready"])
 
@@ -75,7 +74,6 @@ class RoundsTest(unittest.TestCase):
         self.write("b")
         state = self.update(["p1", "p2"])
         self.assertEqual(state["rounds"], 2)
-        self.assertEqual(state["stalled"], 0)
         self.assertEqual(state["idle"], 0)
         self.assertFalse(state["exhausted"])
 
