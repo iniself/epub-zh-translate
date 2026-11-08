@@ -229,6 +229,32 @@ def cmd_check(args):
     if args.chunk and len(names) != 1:
         raise SystemExit("--chunk needs exactly one matching file, matched %d"
                          % len(names))
+    if args.abandon:
+        if args.chunk is None:
+            raise SystemExit("--abandon needs --chunk <n>")
+        name = names[0]
+        stem = Path(name).stem
+        path = cfg.zh_dir / chunks.chunk_name(stem, args.chunk)
+        problems = chunks.check_file(cfg, name, only_chunk=args.chunk,
+                                     fix=True, placeholders=True)
+        rounds.mark_exhausted(cfg, name, args.chunk)
+        rounds.update(cfg, name, args.chunk, path, problems)
+        if not problems:
+            rounds.clear(cfg, name, args.chunk)
+            print("%s chunk %d: OK after abandon/fallback"
+                  % (name, args.chunk))
+            return 0
+        print("%s chunk %d: %d problem(s) remain"
+              % (name, args.chunk, len(problems)))
+        for problem in problems[:20]:
+            print("  !!", problem)
+        if rounds.is_placeholder_only(problems):
+            print("next: run `review --add %s --chunk %d`; do not dispatch"
+                  % (stem, args.chunk))
+        else:
+            print("next: main session must finish this chunk once; do not "
+                  "dispatch")
+        return 1
     skip_missing = (args.only is None and args.chunk is None
                     and not args.all)
     all_problems = []
@@ -528,6 +554,10 @@ def build_parser():
                         "single anchors (pagebreaks, endnote targets) at an "
                         "approximate position; run only after the translator "
                         "failed to restore them")
+    p.add_argument("--abandon", action="store_true",
+                   help="finalize --chunk after a subagent hit its step limit: "
+                        "mark it exhausted, run one placeholder fallback, and "
+                        "print the next step")
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("review",

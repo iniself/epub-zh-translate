@@ -209,6 +209,9 @@ TOOL="<skill-base>/epubzh-run"
 #     页码/脚注等不可见单锚点按相对位置近似补回
 "$TOOL" check --config book.toml <stem> --chunk <n> --fix --placeholders
 
+# 5c. 子代理被 steps 强制结束：直接收尾（标 exhausted + 自动兜底一次）
+"$TOOL" check --config book.toml <stem> --chunk <n> --abandon
+
 # 6. 兜底后仍过不了：登记人工介入，然后继续下一块
 "$TOOL" review --config book.toml --add <stem> --chunk <n>
 
@@ -225,11 +228,15 @@ TOOL="<skill-base>/epubzh-run"
 
 ```json
 {
-  "agent": "general",
+  "agent": "translate",
   "description": "Translate chunk 001",
   "prompt": "Read <work/prompts/...>.md and perform the translation. Save the result to <work/zh/...>.txt. Follow the prompt file exactly; handle only this chunk."
 }
 ```
+
+优先派 `translate`。如果客户端报这个 agent 不存在（用户没配），再改用
+`agent: "general"` 派一次；不要让用户为了用 skill 必须先建 agent。
+没有 `translate` 也能正常翻译，只是没有 `steps` 硬上限。
 
 新建子代理只传 `agent`、`description`、`prompt`，**不要传续派/恢复参数**（opencode
 叫 `sessionID`）；只有续派上一次调用返回的子代理时才原样使用它的真实 ID。编造
@@ -263,10 +270,12 @@ TOOL="<skill-base>/epubzh-run"
 3. `check <stem> --chunk <n> --fix`；只改自检点名的段，缺失的占位符按原文补回。
    只运行 `--fix` 不算修复，必须编辑点名的段；没有编辑过不得报失败。
    自检会打印 `round X/6`：工具只把“文件真的改过 + 跑了一次 check”算一轮。
-   连续两轮问题数不降，或到 6 轮，工具会把块标成 `exhausted`：
+   第一次 check 问题数没下降（或到 6 轮），工具就把块标成 `exhausted`：
    - 只剩占位符错误时，`check` 自动跑一次单标记补位；
    - 仍不过，工具打印 `exhausted: ...`，由主会话直接修或运行
      `review --add <stem> --chunk <n>` 登记，**不要再派子代理**。
+   子代理被 `steps` 强制结束时，主会话直接跑
+   `check <stem> --chunk <n> --abandon`，不要重新数 6 轮。
    每轮只 `edit` 点名的段，然后立刻 `check`；不要用 Python/sed 改标记串。
    登记后正文写一行 `⚠️ 已登记人工介入：<文件> 第 N 块`，然后继续下一块；
 4. 通过后直接运行下一次 `next`，并在正文写一行：
@@ -378,6 +387,9 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 3. 同一分块最多派发 2 次（正常一次 + brief 一次）；之后走第 2 条的兜底。
 4. 子代理的完成回复应为 `已写入 <path>；check OK` 或 `失败：<原因>`；没有 `check OK`
    就按未完成处理。工具报 `exhausted` 后，按下一节登记，不要停整本。
+5. 子代理被 `steps` 强制结束时，主会话立刻运行
+   `check <stem> --chunk <n> --abandon`；它标 exhausted 并兜底一次，不让主会话
+   重跑 6 轮。之后按输出处理：通过就继续，否则登记或补译一次。
 
 #### 人工介入清单
 
@@ -410,7 +422,8 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 弱模型（4B 级激活、thinking 很长的模型）建议单独配一个翻译 subagent，降低推理深度。
 `steps` 是安全上限，不是轮次：6 轮正常修复大约需要 20 次工具调用，建议设 25–30；
-设成 12 会在第 2–3 轮就杀掉正常修复。示例（opencode 配置，模型 ID 按实际填写）：
+设成 12 会在第 2–3 轮就杀掉正常修复。**这是可选建议**，不配置也能用，只是没有硬上限；
+skill 会优先派 `translate`，不存在时自动退回 `general`。示例（模型 ID 按实际填写）：
 
 ```jsonc
 {

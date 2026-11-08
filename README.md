@@ -180,6 +180,27 @@ would have to be retranslated. You can also edit `mode` in `book.toml`, but only
 before the first chunk. Mode is a translation-side setting: it never requires
 re-running `extract`.
 
+### Optional: cap subagent steps
+
+If the client supports subagent configuration, give the translation subagent a `steps`
+limit so a stuck model cannot keep calling tools forever:
+
+```jsonc
+"agents": {
+  "translate": {
+    "mode": "subagent",
+    "description": "Translates one EPUB chunk",
+    "steps": 28
+  }
+}
+```
+
+`steps` is the agent's iteration limit; 25–30 works for the six-round repair budget
+(about 20 calls). Too small will kill normal repairs. **It is optional**: the skill
+prefers `translate` and falls back to `general` when it does not exist, so the skill
+works without any configuration, just without a hard ceiling. Restart the client after
+changing the config.
+
 ### Paths
 
 **Best practice: put both the source EPUB and the output EPUB in the directory

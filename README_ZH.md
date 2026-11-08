@@ -53,6 +53,24 @@
 `book.toml` 里的 `mode`，但同样要在开翻前。这个设置只影响翻译，不需要重跑
 `extract`。
 
+## 可选：限制子代理步数
+
+如果客户端支持 subagent 配置，可以给翻译子代理加 `steps`，防止模型卡住后无限调用：
+
+```jsonc
+"agents": {
+  "translate": {
+    "mode": "subagent",
+    "description": "Translates one EPUB chunk",
+    "steps": 28
+  }
+}
+```
+
+`steps` 是 agent 迭代上限，建议 25–30；6 轮正常修复大约需要 20 次调用，设得太小会误杀。
+**不配置也能用**：skill 优先派 `translate`，不存在时自动退回 `general`，只是没有硬上限。
+修改后需要重启客户端。
+
 ## 路径怎么写
 
 **最佳实践：把源 EPUB 和输出 EPUB 都放在启动 opencode 的目录（会话目录），

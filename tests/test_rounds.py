@@ -30,13 +30,21 @@ class RoundsTest(unittest.TestCase):
         self.assertEqual(state["rounds"], 1)
         self.assertFalse(state["exhausted"])
 
-    def test_no_edit_and_no_progress_exhausts_after_two_stalls(self):
+    def test_first_stall_exhausts_the_chunk(self):
         self.write("a")
         self.update(["p"])
-        self.assertEqual(self.update(["p"])["stalled"], 1)
         state = self.update(["p"])
-        self.assertEqual(state["stalled"], 2)
+        self.assertEqual(state["stalled"], 1)
         self.assertTrue(state["exhausted"])
+
+    def test_mark_exhausted_forces_the_state(self):
+        self.write("a")
+        rounds.mark_exhausted(self.cfg, "c.xhtml", 1)
+        state = rounds.get(self.cfg, "c.xhtml", 1)
+        self.assertTrue(state["exhausted"])
+        state = self.update(["p"])
+        self.assertTrue(state["exhausted"])
+        self.assertTrue(state["forced"])
 
     def test_edit_with_fewer_problems_resets_the_stall(self):
         self.write("a")

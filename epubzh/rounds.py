@@ -8,7 +8,7 @@ hour and never reach the fallback. This module records what actually happened:
 * a round is counted only when the chunk file changed since the previous
   ``check``;
 * a check whose problem count did not shrink is a stall;
-* six rounds, or two consecutive stalls, mark the chunk ``exhausted``.
+* the first stall, or six rounds, mark the chunk ``exhausted``.
 
 Once exhausted, the CLI runs the placeholder fallback itself and ``next``
 stops dispatching the chunk to a subagent. The decision no longer depends on
@@ -20,7 +20,7 @@ from pathlib import Path
 
 FILENAME = "check_state.json"
 MAX_ROUNDS = 6
-MAX_STALLED = 2
+MAX_STALLED = 1
 
 
 def path_for(cfg):
@@ -80,6 +80,20 @@ def mark_fallback(cfg, name, ci):
     write(cfg, data)
 
 
+def mark_exhausted(cfg, name, ci):
+    """Force a chunk to exhausted without waiting for the round budget.
+
+    Used when a subagent was killed by its step limit before it could finish
+    checking: the work is already abandoned, so the main session must not be
+    asked to repeat six rounds.
+    """
+    data = read(cfg)
+    state = data.setdefault(_key(name, ci), {})
+    state["forced"] = True
+    state["exhausted"] = True
+    write(cfg, data)
+
+
 def update(cfg, name, ci, chunk_path, problems):
     """Record one CLI check and return the chunk's state.
 
@@ -98,10 +112,12 @@ def update(cfg, name, ci, chunk_path, problems):
         data.pop(key, None)
         write(cfg, data)
         return {"rounds": rounds, "problems": 0, "exhausted": False,
-                "stalled": 0, "fallback": bool(previous.get("fallback"))}
+                "stalled": 0, "fallback": bool(previous.get("fallback")),
+                "forced": bool(previous.get("forced"))}
     last = previous.get("last_problems")
     stalled = int(previous.get("stalled", 0))
     stalled = 0 if last is None or count < last else stalled + 1
+    forced = bool(previous.get("forced"))
     state = {
         "rounds": rounds,
         "problems": count,
@@ -109,7 +125,8 @@ def update(cfg, name, ci, chunk_path, problems):
         "last_sha": sha,
         "stalled": stalled,
         "fallback": bool(previous.get("fallback")),
-        "exhausted": rounds >= MAX_ROUNDS or stalled >= MAX_STALLED,
+        "forced": forced,
+        "exhausted": forced or rounds >= MAX_ROUNDS or stalled >= MAX_STALLED,
     }
     data[key] = state
     write(cfg, data)
