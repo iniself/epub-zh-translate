@@ -7,8 +7,11 @@ hour and never reach the fallback. This module records what actually happened:
 
 * a round is counted only when the chunk file changed since the previous
   ``check``;
-* a check whose problem count did not shrink is a stall;
-* the first stall, or six rounds, mark the chunk ``exhausted``.
+* checking again without editing is an idle check: it is not a round and does
+  not run the fallback; two idle checks stop the chunk for the main session;
+* a new round whose problem count did not shrink is a stall; the first stall
+  after a real edit, or six rounds, marks the chunk exhausted and makes it
+  eligible for the automatic placeholder fallback.
 
 Once exhausted, the CLI runs the placeholder fallback itself and ``next``
 stops dispatching the chunk to a subagent. The decision no longer depends on
@@ -21,6 +24,7 @@ from pathlib import Path
 FILENAME = "check_state.json"
 MAX_ROUNDS = 6
 MAX_STALLED = 1
+MAX_IDLE = 2
 
 
 def path_for(cfg):
@@ -77,6 +81,7 @@ def mark_fallback(cfg, name, ci):
     data = read(cfg)
     state = data.setdefault(_key(name, ci), {})
     state["fallback"] = True
+    state["exhausted"] = True
     write(cfg, data)
 
 
@@ -104,29 +109,39 @@ def update(cfg, name, ci, chunk_path, problems):
     key = _key(name, ci)
     previous = data.get(key, {})
     sha = _file_sha(chunk_path)
-    rounds = int(previous.get("rounds", 0))
-    if sha is not None and sha != previous.get("last_sha"):
-        rounds += 1
+    changed = sha is not None and sha != previous.get("last_sha")
+    rounds = int(previous.get("rounds", 0)) + (1 if changed else 0)
+    idle = 0 if changed else int(previous.get("idle", 0)) + 1
     count = len(problems)
     if count == 0:
         data.pop(key, None)
         write(cfg, data)
         return {"rounds": rounds, "problems": 0, "exhausted": False,
-                "stalled": 0, "fallback": bool(previous.get("fallback")),
-                "forced": bool(previous.get("forced"))}
+                "stalled": 0, "idle": 0, "changed": changed,
+                "fallback": bool(previous.get("fallback")),
+                "forced": bool(previous.get("forced")),
+                "fallback_ready": False}
     last = previous.get("last_problems")
     stalled = int(previous.get("stalled", 0))
-    stalled = 0 if last is None or count < last else stalled + 1
+    if changed:
+        stalled = 0 if last is None or count < last else stalled + 1
     forced = bool(previous.get("forced"))
+    stalled_out = changed and rounds >= 2 and stalled >= MAX_STALLED
+    fallback_ready = forced or rounds >= MAX_ROUNDS or stalled_out
+    exhausted = (bool(previous.get("exhausted")) or forced
+                 or rounds >= MAX_ROUNDS or stalled_out or idle >= MAX_IDLE)
     state = {
         "rounds": rounds,
         "problems": count,
         "last_problems": count,
         "last_sha": sha,
         "stalled": stalled,
+        "idle": idle,
+        "changed": changed,
         "fallback": bool(previous.get("fallback")),
         "forced": forced,
-        "exhausted": forced or rounds >= MAX_ROUNDS or stalled >= MAX_STALLED,
+        "fallback_ready": fallback_ready,
+        "exhausted": exhausted,
     }
     data[key] = state
     write(cfg, data)

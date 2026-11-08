@@ -33,9 +33,31 @@ class RoundsTest(unittest.TestCase):
     def test_first_stall_exhausts_the_chunk(self):
         self.write("a")
         self.update(["p"])
+        self.write("b")
         state = self.update(["p"])
         self.assertEqual(state["stalled"], 1)
         self.assertTrue(state["exhausted"])
+        self.assertTrue(state["fallback_ready"])
+
+    def test_idle_checks_stop_without_triggering_fallback(self):
+        self.write("a")
+        self.update(["p"])
+        state = self.update(["p"])
+        self.assertEqual(state["idle"], 1)
+        self.assertFalse(state["exhausted"])
+        state = self.update(["p"])
+        self.assertEqual(state["idle"], 2)
+        self.assertTrue(state["exhausted"])
+        self.assertFalse(state["fallback_ready"])
+
+    def test_an_edit_resets_the_idle_count(self):
+        self.write("a")
+        self.update(["p"])
+        self.update(["p"])
+        self.write("b")
+        state = self.update(["p"])
+        self.assertEqual(state["idle"], 0)
+        self.assertEqual(state["rounds"], 2)
 
     def test_mark_exhausted_forces_the_state(self):
         self.write("a")
@@ -49,11 +71,12 @@ class RoundsTest(unittest.TestCase):
     def test_edit_with_fewer_problems_resets_the_stall(self):
         self.write("a")
         self.update(["p1", "p2", "p3"])
-        self.assertEqual(self.update(["p1", "p2", "p3"])["stalled"], 1)
+        self.assertEqual(self.update(["p1", "p2", "p3"])["idle"], 1)
         self.write("b")
         state = self.update(["p1", "p2"])
         self.assertEqual(state["rounds"], 2)
         self.assertEqual(state["stalled"], 0)
+        self.assertEqual(state["idle"], 0)
         self.assertFalse(state["exhausted"])
 
     def test_six_real_rounds_exhaust_the_chunk(self):

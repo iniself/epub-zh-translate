@@ -271,7 +271,10 @@ def cmd_check(args):
                 print("  round %d/%d, %d problem(s)"
                       % (state["rounds"], rounds.MAX_ROUNDS,
                          state["problems"]))
-            if (state.get("exhausted") and not state.get("fallback")
+            if state.get("idle"):
+                print("  no file change since the last check; edit the named "
+                      "segments before checking again")
+            if (state.get("fallback_ready") and not state.get("fallback")
                     and args.fix and not args.placeholders and problems
                     and rounds.is_placeholder_only(problems)
                     and getattr(cfg, "mode", "inline") != "aligned"):
