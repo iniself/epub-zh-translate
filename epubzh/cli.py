@@ -84,6 +84,7 @@ def cmd_init(args):
     work_abs = config.resolve_path(cfg_path.parent, args.work)
 
     profile = config.check_profile(args.profile)
+    mode = config.check_mode(args.mode)
     print("base    = %s" % base)
     print("config  = %-24s -> %s" % (_shown(base, cfg_path), cfg_path))
     print("source  = %-24s -> %s" % (args.source, source))
@@ -93,10 +94,12 @@ def cmd_init(args):
              "max %d segments" % config.PROFILES[profile]["max_segments_per_chunk"]
              if config.PROFILES[profile]["max_segments_per_chunk"]
              else "no segment cap"))
+    print("mode    = %s" % mode)
     config.write_default(cfg_path, source, args.title, author=args.author,
                          work=str(work_abs), output=str(output_abs),
                          source_dir=str(source_dir_abs),
-                         source_title=args.source_title, profile=profile)
+                         source_title=args.source_title, profile=profile,
+                         mode=mode)
     cfg = config.load(cfg_path)
     guide.seed_terms(cfg)
     guide.seed_notes(cfg)
@@ -451,6 +454,9 @@ def build_parser():
                    choices=sorted(config.PROFILES),
                    help="chunk preset: large (2600 words, no cap), small "
                         "(1200/40), mini (1000/25) or tiny (600/20)")
+    p.add_argument("--mode", default="inline",
+                   choices=sorted(config.TRANSLATE_MODES),
+                   help="translation format: inline (default) or aligned")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("unpack", help="unpack the source epub")

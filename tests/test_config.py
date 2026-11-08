@@ -7,13 +7,22 @@ from epubzh import config
 
 
 class DefaultConfigTest(unittest.TestCase):
-    def test_generated_config_defaults_to_aligned(self):
+    def test_generated_config_defaults_to_inline(self):
         root = Path(tempfile.mkdtemp())
         path = root / "book.toml"
         config.write_default(path, str(root / "book.epub"), "书名")
         text = path.read_text(encoding="utf-8")
         self.assertIn("[translate]", text)
-        self.assertIn('mode = "aligned"', text)
+        self.assertIn('mode = "inline"', text)
+        self.assertEqual(config.load(path).mode, "inline")
+
+    def test_generated_config_accepts_aligned(self):
+        root = Path(tempfile.mkdtemp())
+        path = root / "book.toml"
+        config.write_default(path, str(root / "book.epub"), "书名",
+                             mode="aligned")
+        self.assertIn('mode = "aligned"',
+                      path.read_text(encoding="utf-8"))
         self.assertEqual(config.load(path).mode, "aligned")
 
 

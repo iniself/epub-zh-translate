@@ -160,21 +160,24 @@ Write `Chunk profile: <profile>` (or `分块配置：<档位>`, for example
 ### Translation format (advanced)
 
 `[translate] mode` in `book.toml` selects how inline formatting is restored.
-New projects get `aligned` written by `init`; no extra argument is needed,
-and a book uses one mode from start to finish.
+New projects default to `inline`. To use `aligned`, say “mode: aligned” when
+invoking the skill; the agent maps it to `init --mode aligned`. A book uses one
+mode from start to finish.
 
-- `aligned` (default): the model writes one fluent `@@@TEXT@@@` per segment
-  plus one `@@@SPAN k@@@` per paired span. The tool verifies that each SPAN
-  text is an exact substring of TEXT, checks order and nesting against the
-  source, and inserts the original markers. Missing, ambiguous, or conflicting
-  spans are reported instead of producing broken HTML.
-- `inline`: the model writes `⟦n⟧` / `⟦/n⟧` markers directly in its translation.
+- `inline` (default): the model writes `⟦n⟧` / `⟦/n⟧` markers directly in its
+  translation. Shorter output, which suits small models with limited output
+  budgets.
+- `aligned`: the model writes one fluent `@@@TEXT@@@` per segment plus one
+  `@@@SPAN k@@@` per paired span. The tool verifies that each SPAN text is an
+  exact substring of TEXT, checks order and nesting against the source, and
+  inserts the original markers. Missing, ambiguous, or conflicting spans are
+  reported instead of producing broken HTML; output is longer than inline.
 
 The model writes these markers into `work/zh/`; you never have to type them
-yourself. To use the old format, change `mode` to `"inline"` in `book.toml`
-**before translating the first chunk**. Switching after translation has started
-makes existing chunks fail validation, so they would have to be retranslated; do
-not switch mid-book. Mode is a translation-side setting: it never requires
+yourself. Choose the mode **before translating the first chunk**. Switching
+after translation has started makes existing chunks fail validation, so they
+would have to be retranslated. You can also edit `mode` in `book.toml`, but only
+before the first chunk. Mode is a translation-side setting: it never requires
 re-running `extract`.
 
 ### Paths

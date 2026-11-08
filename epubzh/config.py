@@ -262,11 +262,13 @@ def toml_escape(value):
 
 
 def write_default(path, source, title, author="", work="work", output="",
-                  source_dir="src", source_title="", profile=DEFAULT_PROFILE):
+                  source_dir="src", source_title="", profile=DEFAULT_PROFILE,
+                  mode="inline"):
     path = Path(path)
     if path.exists():
         raise SystemExit("refusing to overwrite existing config: %s" % path)
     profile = check_profile(profile)
+    mode = check_mode(mode)
     preset = PROFILES[profile]
     root = path.parent
     # Store paths relative to the project directory: no home directory in
@@ -308,11 +310,11 @@ max_segments_per_chunk = %d
 require_latin = true
 
 [translate]
-# Output format for new chunks: "aligned" (default) or "inline".
+# Output format for new chunks: "inline" (default) or "aligned".
 # Set this before translating the first chunk. Switching later makes existing
 # chunks fail validation, because each book is expected to use one format
 # from start to finish.
-mode = "aligned"
+mode = "%s"
 
 [typography]
 spacing = true
@@ -331,7 +333,7 @@ contents_file = "contents.html"
         toml_escape(source), toml_escape(source_dir), toml_escape(work),
         toml_escape(output), toml_escape(title), toml_escape(source_title or title),
         toml_escape(author), profile, preset["words_per_chunk"],
-        preset["max_segments_per_chunk"],
+        preset["max_segments_per_chunk"], mode,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
