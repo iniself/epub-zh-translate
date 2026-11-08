@@ -94,6 +94,11 @@ class ContractTest(unittest.TestCase):
         text = contract("repair")
         self.assertIn("不补缺失的占位符", text)
 
+    def test_contract_explains_nesting_mismatch(self):
+        text = contract("repair")
+        self.assertIn("placeholder nesting mismatch", text)
+        self.assertIn("闭标记移回", text)
+
     def test_repair_opening_says_fix_cannot_restore_placeholders(self):
         text = guide._opening("repair", 1, 0)
         self.assertIn("不会补缺失的占位符", text)
@@ -189,6 +194,50 @@ class BriefPromptTest(unittest.TestCase):
         text = self.build("repair")
         self.assertIn("先运行规则 3 里的自检命令", text)
         self.assertNotIn("第一步是 `write` 输出文件", text)
+
+    def test_aligned_brief_prompt_has_the_span_format(self):
+        cfg = self.cfg()
+        cfg.mode = "aligned"
+        index = {"chapter.html": {"chunks": 1}}
+        with mock.patch.object(guide.chunks, "chunk_counts", return_value=[5]), \
+                mock.patch.object(guide, "_chunk_prompt_state",
+                                  return_value=("pending", 0)):
+            text = guide._build_brief_prompt(cfg, "chapter.html", 1, index)
+        self.assertIn("@@@TEXT@@@", text)
+        self.assertIn("@@@SPAN 0@@@", text)
+        self.assertIn("逐字", text)
+        self.assertIn("check --config", text)
+
+
+class AlignedContractTest(unittest.TestCase):
+    def contract(self, state, last=0):
+        return guide._aligned_contract(CFG, "chapter", 1, DST, state, last, 10)
+
+    def test_rules_describe_text_and_span_blocks(self):
+        text = guide._aligned_rules()
+        self.assertIn("@@@TEXT@@@", text)
+        self.assertIn("@@@SPAN k@@@", text)
+        self.assertIn("逐字", text)
+        self.assertIn("不要把成对标记写进 TEXT", text)
+        self.assertIn("@@@VERBATIM@@@", text)
+
+    def test_contract_points_at_aligned_errors(self):
+        text = self.contract("repair")
+        self.assertIn("does not appear verbatim", text)
+        self.assertIn("missing SPAN", text)
+        self.assertIn("不会补 SPAN", text)
+        self.assertNotIn("缺失的占位符", text)
+
+    def test_repair_does_not_tell_the_model_to_add_pair_markers(self):
+        text = self.contract("repair")
+        self.assertNotIn("把缺失的 `⟦n⟧`", text)
+        self.assertIn("只改自检点名的段", text)
+
+    def test_aligned_opening_runs_check_for_repair(self):
+        text = guide._aligned_opening("repair", 2, 0)
+        self.assertIn("check --chunk 2 --fix", text)
+        self.assertIn("不会替你补 SPAN", text)
+        self.assertNotIn("直接写输出文件", text)
 
 
 class NextTargetTest(unittest.TestCase):

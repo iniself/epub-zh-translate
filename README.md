@@ -156,6 +156,21 @@ prose usually hits the word cap, tables and lists usually hit the segment cap.
 Write `Chunk profile: <profile>` (or `分块配置：<档位>`, for example
 `分块配置：mini`) when invoking the skill.
 
+### Translation format (advanced)
+
+`[translate] mode` in `book.toml` selects how inline formatting is restored:
+
+- `inline` (default): the translator copies `⟦n⟧` / `⟦/n⟧` markers by hand.
+- `aligned`: the translator writes one fluent `@@@TEXT@@@` per segment plus
+  one `@@@SPAN k@@@` per paired span. The tool verifies that each SPAN text is
+  an exact substring of TEXT, checks order and nesting against the source, and
+  inserts the original markers. Missing, ambiguous, or conflicting spans are
+  reported instead of producing broken HTML.
+
+Mode is a translation-side setting and can be changed without re-running
+`extract`. Existing inline chunks are rejected in `aligned` mode and reported
+as `repair`, so they can be retranslated chunk by chunk.
+
 ### Paths
 
 **Best practice: put both the source EPUB and the output EPUB in the directory

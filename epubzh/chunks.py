@@ -10,7 +10,17 @@ from . import markup, spacing
 
 SEG_RE = re.compile(r"^@@@\s*SEG\s*0*(\d+)\s*@@@\s*$")
 VERBATIM_RE = re.compile(r"^@@@\s*VERBATIM\s*@@@$")
+ALIGNED_MARK_RE = re.compile(r"@@@\s*(TEXT|SPAN\s+0*(\d+))\s*@@@")
+ALIGNED_TAG_RE = re.compile(r"@@@\s*TEXT\s*@@@")
 CJK_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+# Upper bound for the span-placement search. Real segments have a handful of
+# ambiguous occurrences; this only stops a pathological file from hanging.
+MAX_ALIGNED_NODES = 200000
+
+
+class AlignedError(ValueError):
+    """A part of an aligned segment cannot be restored deterministically."""
 
 
 def file_sha256(path):
@@ -404,6 +414,11 @@ def restore_placeholders(path, chunk):
     path = Path(path)
     if not path.exists():
         return []
+    # Aligned files are assembled by ``parse_translation``; the inline
+    # heuristics would wrap Latin literals across TEXT/SPAN boundaries and
+    # corrupt the file.
+    if is_aligned_file(path):
+        return []
     preamble, blocks = _split_blocks(path)
     offset = chunk[0].index
     fixes, changed = [], False
@@ -451,6 +466,7 @@ def repair_chunk(path, chunk):
     path = Path(path)
     if not path.exists():
         return RepairReport([], [], False, [], [])
+    aligned = is_aligned_file(path)
     preamble, blocks = _split_blocks(path)
     drop = set()
     removed, dropped, ambiguous = [], [], []
@@ -469,8 +485,13 @@ def repair_chunk(path, chunk):
         seg = chunk[num - 1]
         cand = by_num[num]
         bodies = [_block_body(blocks[i][1]) for i in cand]
-        valid = [i for i, body in zip(cand, bodies)
-                 if body and seg.check(body) is None]
+        if aligned:
+            valid = [i for i in cand
+                     if _aligned_block_ok(seg,
+                                          "\n".join(blocks[i][1][1:]))]
+        else:
+            valid = [i for i, body in zip(cand, bodies)
+                     if body and seg.check(body) is None]
         if len(set(bodies)) == 1:
             keep = cand[0]
         elif len(valid) == 1:
@@ -493,14 +514,17 @@ def repair_chunk(path, chunk):
         kept.sort(key=lambda block: block[0])
 
     placeholder_fixes = []
-    for block in kept:
-        num, lines = block
-        if not 1 <= num <= len(chunk):
-            continue
-        fixed, markers = _remove_extra_single_closes(lines, chunk[num - 1])
-        if markers:
-            block[1] = fixed
-            placeholder_fixes.append((num, markers))
+    if not aligned:
+        # In aligned mode position fixes would desynchronise SPAN text from
+        # TEXT; leave them to the aligned parser and the model instead.
+        for block in kept:
+            num, lines = block
+            if not 1 <= num <= len(chunk):
+                continue
+            fixed, markers = _remove_extra_single_closes(lines, chunk[num - 1])
+            if markers:
+                block[1] = fixed
+                placeholder_fixes.append((num, markers))
 
     if drop or reordered or placeholder_fixes:
         out = list(preamble)
@@ -512,11 +536,255 @@ def repair_chunk(path, chunk):
                         placeholder_fixes)
 
 
-def parse_translation(path, nseg, chunk=None):
-    """Parse a translated chunk file into (texts, verbatim flags, error)."""
+def _marker_number(marker):
+    match = markup.PH_RE.fullmatch(marker)
+    return int(match.group(1)) if match else None
+
+
+def _pair_spans(seg):
+    """[(number, open_index, close_index)] for the source segment's pairs."""
+    out = []
+    for item in seg.items:
+        if item["kind"] != "pair":
+            continue
+        number = _marker_number(item["open"])
+        start = seg.text.find(item["open"])
+        end = seg.text.find(item["close"], start + len(item["open"]))
+        if number is None or start < 0 or end < 0:
+            continue
+        out.append((number, start, end + len(item["close"])))
+    out.sort(key=lambda pair: pair[1])
+    return out
+
+
+def _aligned_sections(body):
+    """Split an aligned segment body into TEXT and numbered SPAN sections.
+
+    The chunk loader joins every line with a space, so this cannot rely on
+    line boundaries; the ``@@@...@@@`` markers are the only structure.
+    """
+    marks = list(ALIGNED_MARK_RE.finditer(body))
+    if not marks:
+        raise AlignedError("missing @@@TEXT@@@ block")
+    if body[:marks[0].start()].strip():
+        raise AlignedError("unexpected text before @@@TEXT@@@")
+    text = None
+    spans = {}
+    order = []
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(body)
+        content = " ".join(
+            part.strip() for part in body[mark.end():end].splitlines()
+            if part.strip())
+        if mark.group(1).upper() == "TEXT":
+            if text is not None:
+                raise AlignedError("duplicated @@@TEXT@@@ block")
+            text = content
+            continue
+        if text is None:
+            raise AlignedError("@@@SPAN %d@@@ before @@@TEXT@@@"
+                               % int(mark.group(2)))
+        number = int(mark.group(2))
+        if number in spans:
+            raise AlignedError("duplicated @@@SPAN %d@@@" % number)
+        spans[number] = content
+        order.append(number)
+    if text is None:
+        raise AlignedError("missing @@@TEXT@@@ block")
+    if "@@@" in text:
+        raise AlignedError("unexpected @@@ marker inside TEXT")
+    return text, [(number, spans[number]) for number in order]
+
+
+def _occurrences(text, needle):
+    """Every start index where ``needle`` occurs, including overlaps."""
+    hits, start = [], 0
+    while True:
+        at = text.find(needle, start)
+        if at < 0:
+            return hits
+        hits.append((at, at + len(needle)))
+        start = at + 1
+
+
+def _vis_prefix(text, index):
+    return _visible_len(text[:index])
+
+
+def _aligned_cost(text, candidate, src_open, src_close, src_total, text_total):
+    """Integer distance from the occurrence to the source-relative position."""
+    start, end = candidate
+    return (abs(_vis_prefix(text, start) * src_total - src_open * text_total)
+            + abs(_vis_prefix(text, end) * src_total - src_close * text_total))
+
+
+def _aligned_placements(text, pairs, spans, seg):
+    """Choose one occurrence per span, keeping source order and nesting."""
+    src_total = _visible_len(seg.text) or 1
+    text_total = _visible_len(text) or 1
+
+    candidates = []
+    costs = []
+    for number, src_open, src_close in pairs:
+        body = spans[number]
+        if not body:
+            raise AlignedError("SPAN %d is empty; it must contain the "
+                               "translated text of the paired span" % number)
+        hits = _occurrences(text, body)
+        if not hits:
+            raise AlignedError(
+                "SPAN %d text does not appear verbatim in TEXT: %s"
+                % (number, _clip(body, 80)))
+        src_a = _vis_prefix(seg.text, src_open)
+        src_b = _vis_prefix(seg.text, src_close)
+        hits.sort(key=lambda hit: _aligned_cost(
+            text, hit, src_a, src_b, src_total, text_total))
+        candidates.append(hits)
+        costs.append(lambda hit, a=src_a, b=src_b: _aligned_cost(
+            text, hit, a, b, src_total, text_total))
+
+    order = [pair[0] for pair in pairs]
+    best = {"score": None, "assignment": None, "ties": 0}
+    nodes = [0]
+
+    def search(index, assignment, score):
+        nodes[0] += 1
+        if nodes[0] > MAX_ALIGNED_NODES:
+            raise AlignedError("too many ambiguous span placements")
+        if best["score"] is not None and score > best["score"]:
+            return
+        if index == len(pairs):
+            if best["score"] is None or score < best["score"]:
+                best.update(score=score, assignment=list(assignment), ties=1)
+            elif score == best["score"]:
+                best["ties"] += 1
+            return
+        src_open = pairs[index][1]
+        for candidate in candidates[index]:
+            ok = True
+            for earlier, chosen in enumerate(assignment):
+                earlier_close = pairs[earlier][2]
+                if earlier_close <= src_open:
+                    if candidate[0] < chosen[1]:
+                        ok = False
+                        break
+                elif not (chosen[0] <= candidate[0]
+                          and candidate[1] <= chosen[1]):
+                    ok = False
+                    break
+            if not ok:
+                continue
+            assignment.append(candidate)
+            search(index + 1, assignment, score + costs[index](candidate))
+            assignment.pop()
+
+    search(0, [], 0)
+    if best["assignment"] is None:
+        raise AlignedError(
+            "source nesting cannot be reproduced in TEXT; keep the paired "
+            "spans in the same order and nesting as the source")
+    if best["ties"] > 1:
+        raise AlignedError(
+            "ambiguous span placement: several equally good positions for "
+            "SPAN %s" % ", ".join(str(n) for n in order))
+    return dict(zip(order, best["assignment"]))
+
+
+def _assemble_aligned(seg, body):
+    """Restore pair markers around a model's whole-segment translation.
+
+    The model writes one fluent ``TEXT`` plus the text of every paired span.
+    Each span must occur verbatim in ``TEXT``; this function locates the spans,
+    checks that their order and nesting match the source, and inserts the
+    original placeholder markers.
+    """
+    text, span_list = _aligned_sections(body)
+    spans = dict(span_list)
+    pairs = _pair_spans(seg)
+    expected = [number for number, _, _ in pairs]
+    if sorted(spans) != sorted(expected):
+        missing = [n for n in expected if n not in spans]
+        extra = sorted(n for n in spans if n not in expected)
+        bits = []
+        if missing:
+            bits.append("missing SPAN %s" % ", ".join(map(str, missing)))
+        if extra:
+            bits.append("unknown SPAN %s" % ", ".join(map(str, extra)))
+        raise AlignedError("paired span mismatch: %s" % "; ".join(bits))
+
+    pair_items = {}
+    for item in seg.items:
+        if item["kind"] == "pair":
+            pair_items[_marker_number(item["open"])] = item
+    pair_markers = set()
+    for number in expected:
+        pair_markers.add(pair_items[number]["open"])
+        pair_markers.add(pair_items[number]["close"])
+    singles = {item["open"] for item in seg.items
+               if item["kind"] == "single"}
+    for match in markup.PH_RE.finditer(text):
+        marker = match.group(0)
+        if marker in pair_markers:
+            raise AlignedError(
+                "TEXT must not contain the paired marker %s; put its text in "
+                "the matching @@@SPAN@@@ block instead" % marker)
+        if marker not in singles:
+            raise AlignedError("TEXT contains unknown marker %s" % marker)
+
+    placements = _aligned_placements(text, pairs, spans, seg)
+    events = []
+    for number in expected:
+        start, end = placements[number]
+        item = pair_items[number]
+        events.append((start, seg.text.find(item["open"]), item["open"]))
+        events.append((end, seg.text.find(item["close"]), item["close"]))
+    events.sort(key=lambda event: (event[0], event[1]))
+
+    out, pos = [], 0
+    for at, _, marker in events:
+        out.append(text[pos:at])
+        out.append(marker)
+        pos = at
+    out.append(text[pos:])
+    assembled = "".join(out)
+    # Visible single markers must be kept by the model. Invisible anchors
+    # (pagebreaks, empty id targets) may be dropped; re-place those by the
+    # source-relative position, exactly as the inline fallback does.
+    assembled, _ = _restore_single_anchors(seg, assembled)
+    return assembled
+
+
+def _aligned_block_ok(seg, body):
+    if any(VERBATIM_RE.match(line.strip()) for line in body.splitlines()):
+        return True
+    try:
+        text = _assemble_aligned(seg, body)
+    except AlignedError:
+        return False
+    return seg.check(text) is None
+
+
+def is_aligned_file(path):
+    """True when a translation file uses the aligned TEXT/SPAN format."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return bool(ALIGNED_TAG_RE.search(raw))
+
+
+def parse_translation(path, nseg, chunk=None, mode=None):
+    """Parse a translated chunk file into (texts, verbatim flags, error).
+
+    ``mode="aligned"`` requires every non-verbatim segment to use the
+    ``@@@TEXT@@@`` format. Without ``mode`` the format is auto-detected, so
+    existing projects keep working unchanged.
+    """
     path = Path(path)
     if not path.exists():
         return None, None, "file missing"
+    aligned = is_aligned_file(path)
+    require_aligned = mode == "aligned"
     parts = load_marked(path)
     if not parts:
         return None, None, "no markers found"
@@ -526,7 +794,30 @@ def parse_translation(path, nseg, chunk=None):
             return None, None, ("partial: segments 1..%d of %d; append from %d"
                                 % (len(nums), nseg, len(nums) + 1))
         return None, None, _marker_problems(parts, nseg, path, chunk)
-    return [p[1] for p in parts], [p[2] for p in parts], None
+    texts, keeps = [], []
+    for number, body, keep in parts:
+        if keep:
+            if chunk is None or not 1 <= number <= len(chunk):
+                return None, None, "verbatim segment needs its source chunk"
+            text = chunk[number - 1].text
+        elif require_aligned and not aligned:
+            return None, None, (
+                "seg %d/%d: expected aligned format (@@@TEXT@@@ + one "
+                "@@@SPAN k@@@ per paired marker); retranslate this chunk"
+                % (number, nseg))
+        elif aligned:
+            if chunk is None or not 1 <= number <= len(chunk):
+                return None, None, "aligned segment needs its source chunk"
+            try:
+                text = _assemble_aligned(chunk[number - 1], body)
+            except AlignedError as exc:
+                return None, None, "seg %d/%d: %s" % (number, nseg, exc)
+        else:
+            text = body
+        texts.append(text)
+        keeps.append(keep)
+    return texts, keeps, None
+
 
 
 def read_index(cfg):
@@ -744,7 +1035,8 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
             if fixes:
                 print("  note: placeholder position may be approximate; "
                       "verify the rendered formatting")
-        translated, verbatim, err = parse_translation(path, len(chunk), chunk)
+        translated, verbatim, err = parse_translation(
+            path, len(chunk), chunk, mode=getattr(cfg, "mode", None))
         if err:
             problems.append("%s chunk %d: %s" % (name, ci, err))
             continue

@@ -33,6 +33,13 @@ css = "default"
 stylesheet = "OEBPS/Styles/stylesheet.css"
 protect_tags = ["pre", "code", "kbd", "samp", "var", "tt"]
 
+[translate]
+# "inline" (default): the translator copies paired inline markers.
+# "aligned": the translator writes one fluent TEXT plus one SPAN per paired
+# span; the tool restores the markers by exact substring matching.
+mode = "inline"
+
+
 [toc]
 contents_file = "contents.html"
 

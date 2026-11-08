@@ -250,12 +250,25 @@ def _tail(path, limit=500, min_cjk=30):
     """Chinese prose at the end of a translated chunk, for tone matching."""
     if not path.exists():
         return ""
+    raw = path.read_text(encoding="utf-8")
+    aligned = bool(chunks.ALIGNED_TAG_RE.search(raw))
     body = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    in_text = False
+    for line in raw.splitlines():
         stripped = line.strip()
         if stripped.startswith("@@@SEG") or stripped.startswith("###"):
+            in_text = False
             continue
-        if stripped == "@@@VERBATIM@@@":
+        if aligned:
+            if chunks.ALIGNED_TAG_RE.match(stripped):
+                in_text = True
+                continue
+            if stripped.startswith("@@@SPAN"):
+                in_text = False
+                continue
+            if not in_text or not stripped:
+                continue
+        elif stripped == "@@@VERBATIM@@@":
             continue
         if stripped:
             body.append(stripped)
@@ -287,6 +300,112 @@ def _preceding_translation(cfg, name, chunk, index):
 
 def _rulecard():
     return config_mod.DEFAULT_RULECARD.read_text(encoding="utf-8")
+
+
+def _aligned_rules():
+    """Output contract for the aligned mode (model writes no pair markers)."""
+    return """## 对齐模式输出格式
+
+输入原文里的行内标记分两种：
+
+- `⟦k⟧ ... ⟦/k⟧`：一对标记，代表链接、加粗、脚注等。**不要把这对标记写进译文。**
+- `⟦k⟧`（没有对应的 `⟦/k⟧`）：单个标记，原样留在译文里。
+
+每个 `@@@SEG nnn@@@` 按下面的格式输出：
+
+```
+@@@SEG 001@@@
+@@@TEXT@@@
+整段自然连贯的译文，单标记 ⟦2⟧ 放在合适的位置。
+@@@SPAN 0@@@
+TEXT 中对应原文 ⟦0⟧...⟦/0⟧ 内容的那段文字
+@@@SPAN 1@@@
+TEXT 中对应原文 ⟦1⟧...⟦/1⟧ 内容的那段文字
+```
+
+规则：
+
+1. `TEXT` 是整段的连贯译文，必须一口气写顺，不要为了行内格式把句子切碎。
+2. 原文里每一对 `⟦k⟧ ... ⟦/k⟧`，都在 TEXT 之后写一个 `@@@SPAN k@@@`。
+3. `SPAN k` 的内容必须逐字出现在 TEXT 中：直接从 TEXT 复制对应文字，不要改写，不要增删空格或标点。
+4. 区间的顺序和嵌套必须与原文一致：SPAN 的顺序就是原文开标记的顺序，外层区间包含内层区间。
+5. TEXT 里只保留单标记 `⟦k⟧`；不要把成对标记写进 TEXT，也不要输出原文没有的 SPAN。
+6. 整段是代码、命令、日志、URL：原文照抄，并在段内单独一行写 `@@@VERBATIM@@@`。
+7. TEXT 和每个 SPAN 尽量各写一行；需要换行时只在句末换行，不要拆开词语。
+"""
+
+
+def _aligned_opening(state, chunk, last):
+    if state == "repair":
+        return ("**立即开始：先运行 `check --chunk %d --fix` 查看现有译文；"
+                "它只修段号、重复段和排序，不会替你补 SPAN。然后只改报错点名的段："
+                "把 SPAN 改成 TEXT 里逐字复制的内容，或补上缺失的 SPAN。**" % chunk)
+    if state == "partial":
+        return ("**立即开始：读完输入文件后先 `read` 输出文件末尾，确认最后一段"
+                "编号 %d，再从下一段继续追加。**" % last)
+    if state == "broken":
+        return ("**立即开始：先运行 `check --chunk %d --fix` 修复段号，"
+                "不要先写文件。**" % chunk)
+    if state == "done":
+        return ("**该分块已完成且自检通过；默认不要重写。只有用户明确要求重译时，"
+                "才删除输出文件后重新翻译。**")
+    return ("**立即开始：读完输入文件后直接写输出文件。推理放在思考里，"
+            "正文第一条消息必须是工具调用。**")
+
+
+def _aligned_contract(cfg, stem, chunk, dst, state, last, nseg):
+    check_cmd = "%s check --config %s %s --chunk %d --fix" % (
+        _module_cmd(cfg), quote_path(cfg.path), stem, chunk)
+    if state == "repair":
+        first = ("1. 输出文件已有完整译文，但自检没通过。第一步动作是运行第 3 条的自检\n"
+                 "   命令，不要先写文件，也不要整块重写。")
+        second = ("2. 只改自检点名的段。常见错误只有三种：SPAN 文字不是 TEXT 的逐字\n"
+                  "   子串、缺少某个 SPAN、TEXT 里混进了成对标记。改完再跑一次自检。")
+    elif state == "broken":
+        first = ("1. 输出文件段号不连续。第一步动作是运行第 3 条的自检命令，`--fix` 会\n"
+                 "   删除重复段、越界段并按段号排序；不要先写文件。")
+        second = ("2. 修复后仍缺段时，按报错给的 `insert between ...` 位置插入；只有结构\n"
+                  "   严重损坏、无法按段号修复时，才用 `write` 重写整个分块为正确的 1..%d 段。"
+                  % nseg)
+    elif state == "partial":
+        first = ("1. 输出文件已有第 1–%d 段。第一步动作是 `read` 文件末尾，确认最后一段\n"
+                 "   编号 %d；不要覆盖已有内容，也不要从第 1 段重写。" % (last, last))
+        second = ("2. 从 `@@@SEG %03d@@@` 开始继续追加：`edit` 的 oldString 只取最后一段\n"
+                  "   （标记行到最后一个 SPAN 的内容），newString = oldString + 换行 + 新段，\n"
+                  "   不要重复最后一段。`edit` 返回 identical / 找不到 / 多处匹配时不要重试，\n"
+                  "   直接 `write` 覆盖整个文件，确保第 1–%d 段原样保留。"
+                  % (last + 1, last))
+    elif state == "done":
+        first = "1. 输出文件已存在，段号完整且自检通过。默认不要重写。"
+        second = "2. 只有用户明确要求重译时才删除输出文件重来；局部修改只改指定段落。"
+    else:
+        first = ("1. 第一步动作是 `write` 输出文件。需要推理就在思考里完成，正文第一条\n"
+                 "   消息必须是工具调用。")
+        second = ("2. 优先一次 `write` 写完整个分块。只有写被截断时才追加：`edit` 的\n"
+                  "   oldString 只取最后一段，newString = oldString + 换行 + 新段，不要在\n"
+                  "   newString 里重复最后一段。`edit` 返回 identical / 找不到 / 多处匹配时\n"
+                  "   不要重试，直接 `write` 覆盖整个分块。")
+    return """## 执行契约
+
+%s
+
+%s
+3. 写完后运行自检（`--fix` 只处理段号、重复段、越界段和排序，**不会补 SPAN**）：
+   `%s`
+4. 自检报错时只改报错的那一段，改完再跑一次：
+   - `SPAN k text does not appear verbatim in TEXT`：把第 k 个 SPAN 改成 TEXT 里
+     对应内容的逐字复制；不要改写 TEXT 来迁就 SPAN。
+   - `missing SPAN k`：补一个 `@@@SPAN k@@@`，并按原文顺序放在正确位置。
+   - `TEXT must not contain the paired marker`：把该成对标记从 TEXT 删掉，
+     对应文字放进 `@@@SPAN k@@@`。
+   - `source nesting cannot be reproduced`：保持原文区间的顺序和嵌套，不要移动区间。
+   - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
+     保留，并在段内单独加一行 `@@@VERBATIM@@@`。
+5. 同一段同一个错误在编辑后连续 2 次仍出现就停下，不要重写整块，也不要问用户，
+   回复一行 `失败：对齐，需工具兜底`。
+   同一分块最多 3 轮“编辑 + 自检”，仍不过就回复一行 `失败：<原因>` 并结束。
+6. 完成后只回复一行：`已写入 %s；check OK`
+""" % (first, second, check_cmd, dst)
 
 
 SEG_HEAD_RE = re.compile(r"^@@@\s*SEG\s*0*(\d+)\s*@@@\s*$", re.M)
@@ -388,6 +507,8 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
    `%s`
 4. 自检报错时只改报错的那一段，改完再跑一次：
    - 占位符按原文照抄；`extra` 里的标记删掉，成对的多余标记整对删除。
+   - 报 `placeholder nesting mismatch` 时，说明某个成对区间吞进了或挤出了相邻标记：
+     把闭标记移回该区间译文之后，保持原文的嵌套关系。
    - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
      保留，并在段内单独加一行 `@@@VERBATIM@@@`。
 5. 同一段同一个占位符错误在编辑后连续 2 次仍出现就停下，不要重写整块，也不要问用户，
@@ -442,6 +563,7 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     nseg = chunks.chunk_counts(cfg, name, info)[chunk - 1]
     chunk_text = src.read_text(encoding="utf-8")
     use_full = full or cfg.profile == "large"
+    aligned = getattr(cfg, "mode", "inline") == "aligned"
     state, last = _chunk_prompt_state(cfg, name, chunk, nseg)
 
     parts = []
@@ -454,7 +576,8 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     parts.append("输入文件：%s" % src)
     parts.append("输出文件：%s" % dst)
     parts.append("")
-    parts.append(_opening(state, chunk, last))
+    parts.append(_aligned_opening(state, chunk, last) if aligned
+                 else _opening(state, chunk, last))
     parts.append("")
 
     if state in ("repair", "broken"):
@@ -465,12 +588,33 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             for problem in problems:
                 parts.append("- %s" % problem.replace("\n", "\n  "))
             parts.append("")
-            parts.append("只改上面点名的段：按原文把缺失的 `⟦n⟧` / `⟦/n⟧` 插回"
-                         "对应译文的位置，多余的标记删掉。`--fix` 只处理段号、"
-                         "重复段和多余闭标记，重复运行不会消除这些错误。")
+            if aligned:
+                parts.append("只改上面点名的段：SPAN 必须是 TEXT 里的逐字子串，"
+                             "缺失的 SPAN 按原文顺序补上；不要把成对标记写进 TEXT。"
+                             "`--fix` 只处理段号、重复段和排序，重复运行不会消除这些错误。")
+            else:
+                parts.append("只改上面点名的段：按原文把缺失的 `⟦n⟧` / `⟦/n⟧` 插回"
+                             "对应译文的位置，多余的标记删掉。`--fix` 只处理段号、"
+                             "重复段和多余闭标记，重复运行不会消除这些错误。")
             parts.append("")
 
-    if use_full:
+    if aligned:
+        parts.append(_aligned_rules().rstrip())
+        parts.append("")
+        terms = terms_for_chunk(cfg, chunk_text)
+        parts.append("## 本块术语（必须统一使用）")
+        parts.append("")
+        if terms:
+            parts.append("| 英文 | 中文 |")
+            parts.append("| --- | --- |")
+            for en, zh in terms:
+                parts.append("| %s | %s |" % (en, zh))
+            parts.append("")
+            parts.append("表中没有的术语，先查 `%s`，不要自创变体。" % cfg.terms_tsv)
+        else:
+            parts.append("本块未命中术语表；遇到术语先查 `%s`。" % cfg.terms_tsv)
+        parts.append("")
+    elif use_full:
         parts.append("## 翻译规范（完整，请逐条执行）")
         parts.append("")
         if cfg.guide_file.exists():
@@ -512,7 +656,8 @@ def _build_prompt(cfg, name, chunk, index, full=False):
         parts.append("")
         parts.append("上面这些标记在原文里没有对应的 `⟦/n⟧`，原样保留即可，"
                      "不要补闭合标记。页码锚点和脚注回跳锚点不可见、最容易漏，"
-                     "翻译时逐段核对，务必保留。")
+                     + ("写进 TEXT 时逐段核对，务必保留。" if aligned
+                        else "翻译时逐段核对，务必保留。"))
         parts.append("")
 
     seen = introduced_for_chunk(cfg, chunk_text, exclude=dst)
@@ -545,7 +690,9 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             parts.append(body.rstrip())
             parts.append("")
 
-    parts.append(_contract(cfg, stem, chunk, dst, state, last, nseg).rstrip())
+    parts.append((_aligned_contract(cfg, stem, chunk, dst, state, last, nseg)
+                  if aligned else
+                  _contract(cfg, stem, chunk, dst, state, last, nseg)).rstrip())
     return "\n".join(parts) + "\n"
 
 
@@ -578,6 +725,37 @@ def _build_brief_prompt(cfg, name, chunk, index):
     else:
         start = ("现在开始：第一步是 `write` 输出文件。推理放在思考里，"
                  "正文第一条消息必须是工具调用。")
+
+    if getattr(cfg, "mode", "inline") == "aligned":
+        return "\n".join([
+            "把输入文件的每一段翻译成简体中文，写入输出文件。",
+            "",
+            "输入：%s" % src,
+            "输出：%s" % dst,
+            "",
+            start,
+            "",
+            "格式（每个 SEG 一段）：",
+            "",
+            "@@@SEG 001@@@",
+            "@@@TEXT@@@",
+            "整段连贯译文，单标记 ⟦2⟧ 保留在合适位置",
+            "@@@SPAN 0@@@",
+            "TEXT 中对应原文 ⟦0⟧...⟦/0⟧ 内容的逐字片段",
+            "",
+            "规则：",
+            "1. 原文里每一对 `⟦k⟧ ... ⟦/k⟧`，在 TEXT 后写 `@@@SPAN k@@@`；"
+            "SPAN 内容必须能在 TEXT 中逐字找到。",
+            "2. TEXT 里只保留单标记 `⟦k⟧`；不要写成对标记，也不要补 `⟦/k⟧`。",
+            "3. 区间顺序和嵌套与原文一致。",
+            "4. 整段是代码、命令、日志、URL：原文照抄，并在段内加一行 "
+            "`@@@VERBATIM@@@`。",
+            "5. 写完运行下面的命令，按报错逐段修；最多两轮，只跑 `--fix` 不算修复：",
+            "   `%s`" % check_cmd,
+            "   仍不过就回复 `失败：对齐，需工具兜底`。",
+            "6. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
+            % dst,
+        ]) + "\n"
 
     return "\n".join([
         "把输入文件的每一段翻译成简体中文，写入输出文件。",

@@ -27,6 +27,18 @@ class ProfileTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             config.check_profile("huge")
 
+    def test_check_mode_defaults_to_inline(self):
+        self.assertEqual(config.check_mode(None), "inline")
+        self.assertEqual(config.check_mode(""), "inline")
+
+    def test_check_mode_accepts_aligned(self):
+        self.assertEqual(config.check_mode("aligned"), "aligned")
+        self.assertEqual(config.check_mode(" ALIGNED "), "aligned")
+
+    def test_check_mode_rejects_unknown_names(self):
+        with self.assertRaises(SystemExit):
+            config.check_mode("tagged")
+
 
 if __name__ == "__main__":
     unittest.main()

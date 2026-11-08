@@ -363,6 +363,34 @@ class Segment(object):
                     "close immediately after its translated span, not all at "
                     "the end; single markers may move)"
                     % (want_pairs, got_pairs))
+        # A paired span must enclose the same markers in the source and in
+        # the translation. Singles may move with word order, but crossing a
+        # pair boundary changes the structure: a close marker placed at the
+        # segment end swallows every following marker.
+        if self.text:
+            for it in self.items:
+                if it["kind"] != "pair":
+                    continue
+                src_start = self.text.find(it["open"])
+                src_end = self.text.find(it["close"], src_start + len(it["open"]))
+                got_start = translated.find(it["open"])
+                got_end = translated.find(it["close"],
+                                          got_start + len(it["open"]))
+                if min(src_start, src_end, got_start, got_end) < 0:
+                    continue
+
+                def inside(text, start, end):
+                    return sorted(m.group(0) for m in PH_RE.finditer(
+                        text[start + len(it["open"]):end]))
+
+                want_inner = inside(self.text, src_start, src_end)
+                got_inner = inside(translated, got_start, got_end)
+                if want_inner != got_inner:
+                    return ("placeholder nesting mismatch for %s: expected "
+                            "inside=%s got inside=%s (keep each pair close "
+                            "immediately after its translated span; do not "
+                            "swallow or eject adjacent markers)"
+                            % (it["open"], want_inner, got_inner))
         return None
 
     def render(self, translated):

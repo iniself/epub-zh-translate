@@ -266,6 +266,10 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 - 分块提示词必须用 `prompt` 生成，不要自己拼；`large` 带完整规范，其余档位带规则卡 +
   本块术语 + 上文；`--brief` 生成极简版，只用于空转兜底。
+- 如果 `book.toml` 有 `[translate] mode = "aligned"`，生成的提示词会使用
+  `@@@TEXT@@@` / `@@@SPAN k@@@`。此时不要把成对 `⟦n⟧` / `⟦/n⟧` 写进 TEXT：
+  TEXT 只保留单标记，每个 SPAN 必须逐字出现在 TEXT 中。`--placeholders` 对
+  aligned 文件不生效；报错时按提示词改 SPAN 或补 SPAN，其余流程不变。
 - 一个 subagent 只做一个分块，不要让它顺手翻译别的分块。
 - 派发子代理时必须带 `description`（3–5 词）和 `prompt`；漏字段会被工具拒绝，
   按报错补齐后重试，不要退回主会话翻译。

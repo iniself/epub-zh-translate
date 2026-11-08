@@ -197,6 +197,22 @@ class PlaceholderOrderTest(unittest.TestCase):
         self.assertIn("source order", bad)
         self.assertIn("single markers may move", bad)
 
+    def test_pair_span_cannot_swallow_a_following_single(self):
+        seg = make_seg(pairs=(0,), singles=(1,),
+                       text="\u27e60\u27e7*1\u27e6/0\u27e7 body "
+                            "\u27e61\u27e7 tail")
+        good = "\u27e60\u27e7*1\u27e6/0\u27e7 \u6b63\u6587 \u27e61\u27e7 \u5c3e"
+        self.assertIsNone(seg.check(good))
+        bad = "\u27e60\u27e7*1 \u6b63\u6587 \u27e61\u27e7 \u5c3e\u27e6/0\u27e7"
+        self.assertIn("placeholder nesting mismatch", seg.check(bad))
+        self.assertIn("\u27e61\u27e7", seg.check(bad))
+
+    def test_pair_span_cannot_eject_a_nested_pair(self):
+        seg = make_seg(pairs=(0, 1),
+                       text="\u27e60\u27e7a\u27e61\u27e7b\u27e6/1\u27e7c\u27e6/0\u27e7")
+        bad = "\u27e60\u27e7\u7532\u27e6/0\u27e7\u27e61\u27e7\u4e59\u27e6/1\u27e7\u4e19"
+        self.assertIn("placeholder", seg.check(bad))
+
     def test_pairs_in_source_order_pass(self):
         seg = make_seg(pairs=(0, 1))
         self.assertIsNone(seg.check("\u27e60\u27e7\u7532\u27e6/0\u27e7"

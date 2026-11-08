@@ -34,6 +34,18 @@ def check_profile(value):
     return name
 
 
+TRANSLATE_MODES = ("inline", "aligned")
+
+
+def check_mode(value):
+    """Return a canonical translation mode or raise SystemExit."""
+    mode = (value or "inline").strip().lower()
+    if mode not in TRANSLATE_MODES:
+        raise SystemExit("unknown translate mode %r: choose one of %s"
+                         % (value, ", ".join(TRANSLATE_MODES)))
+    return mode
+
+
 def _p(base, value):
     p = Path(value).expanduser()
     return p if p.is_absolute() else (base / p)
@@ -84,6 +96,7 @@ class Config:
     skip: set = field(default_factory=set)
     protect_blocks: list = field(default_factory=list)
     profile: str = DEFAULT_PROFILE
+    mode: str = "inline"
     words_per_chunk: int = PROFILES[DEFAULT_PROFILE]["words_per_chunk"]
     max_segments_per_chunk: int = PROFILES[DEFAULT_PROFILE]["max_segments_per_chunk"]
     require_latin: bool = True
@@ -188,9 +201,11 @@ def load(config_path="book.toml"):
     output = _p(root, output_value)
 
     extract = raw.get("extract", {})
+    translate = raw.get("translate", {})
     typography = raw.get("typography", {})
     toc = raw.get("toc", {})
     profile = check_profile(extract.get("profile"))
+    mode = check_mode(translate.get("mode"))
     preset = PROFILES[profile]
     css_value = typography.get("css", "default")
     if css_value in (None, "", "none", "false"):
@@ -225,6 +240,7 @@ def load(config_path="book.toml"):
         skip=set(_as_list(extract.get("skip"), [])),
         protect_blocks=_as_list(extract.get("protect_blocks"), []),
         profile=profile,
+        mode=mode,
         words_per_chunk=int(extract.get("words_per_chunk",
                                         preset["words_per_chunk"])),
         max_segments_per_chunk=int(extract.get("max_segments_per_chunk",
