@@ -120,23 +120,41 @@ def collect(cfg, name, ci):
              "detail": issue["detail"]} for issue in issues]
 
 
+def _reviewable(issues):
+    """Manual review is only for placeholder failures that survived repair.
+
+    Everything else is unfinished translation: untranslated segments, partial
+    files, missing files, marker/structure errors. Those belong in the
+    translation queue, never in the manual-review registry.
+    """
+    return bool(issues) and all(issue["kind"] == "placeholder"
+                                for issue in issues)
+
+
+def _kind_summary(issues):
+    counts = {}
+    for issue in issues:
+        counts[issue["kind"]] = counts.get(issue["kind"], 0) + 1
+    return ", ".join("%d %s" % (count, kind)
+                     for kind, count in sorted(counts.items()))
+
+
 def add(cfg, name, ci):
     """Register a chunk's problems, replacing any earlier rows for it.
 
-    Untranslated segments are rejected: they are unfinished work, not a
-    manual-review problem. The translator must translate them (or mark
-    genuinely verbatim text), so registering can never be used to skip a
-    chunk that still contains source-language prose.
+    Only chunks whose every remaining issue is a placeholder failure are
+    accepted. A chunk with untranslated segments, a partial/missing file, or
+    structural damage is unfinished translation and must go back to the
+    translator instead.
     """
     name = _resolve(cfg, name)
     fresh = collect(cfg, name, ci)
-    untranslated = [row for row in fresh if row["kind"] == "not-translated"]
-    if untranslated:
+    if fresh and not _reviewable(fresh):
         raise SystemExit(
-            "%s chunk %d: %d segment(s) are not translated; finish them in "
-            "work/zh (or mark genuinely verbatim text with @@@VERBATIM@@@). "
-            "Untranslated text is translation work, not manual review."
-            % (name, ci, len(untranslated)))
+            "%s chunk %d is not finished (%s); keep translating and run "
+            "`check --chunk` again. Manual review only accepts placeholder "
+            "failures after the repair rounds." % (name, ci,
+                                                    _kind_summary(fresh)))
     rows = [row for row in read(cfg)
             if not (row["file"] == name and row["chunk"] == ci)]
     rows.extend(fresh)
@@ -144,22 +162,12 @@ def add(cfg, name, ci):
     return fresh
 
 
-def _needs_translation(issue):
-    """True for issues the translator agent must finish, not a human."""
-    if issue["kind"] == "not-translated":
-        return True
-    detail = issue.get("detail", "")
-    return detail.startswith(("file missing", "partial:", "no markers found"))
-
-
 def recheck(cfg):
     """Clear the registry, re-check recorded chunks, keep what still fails.
 
-    Chunks that are not actually translated (untranslated segments, missing or
-    partial files, missing markers) are removed from the registry instead of
-    being kept: they belong in the translation queue, where `next` hands them
-    back to the agent. Only placeholder/structure failures that survived
-    repair stay registered for manual review.
+    Placeholder-only failures stay registered. Any other issue means the chunk
+    is unfinished, so all its rows are dropped and `next` hands it back to the
+    translator.
     """
     rows = read(cfg)
     if not rows:
@@ -177,9 +185,8 @@ def recheck(cfg):
         if not issues:
             cleared.append((name, ci))
             continue
-        retry = [issue for issue in issues if _needs_translation(issue)]
-        if retry:
-            requeued.append((name, ci, len(retry)))
+        if not _reviewable(issues):
+            requeued.append((name, ci, len(issues)))
             continue
         remaining.extend(issues)
     write(cfg, remaining)

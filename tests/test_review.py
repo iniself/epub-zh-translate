@@ -88,6 +88,24 @@ class ReviewRegistryTest(unittest.TestCase):
             review.add(self.cfg, "c", 1)
         self.assertEqual(review.read(self.cfg), [])
 
+    def test_add_refuses_a_partial_chunk(self):
+        set_source(self.cfg,
+                   "<p>First paragraph.</p>\n<p>Second paragraph.</p>\n")
+        write_chunk(self.cfg, "第一段。")
+        with self.assertRaises(SystemExit):
+            review.add(self.cfg, "c", 1)
+        self.assertEqual(review.read(self.cfg), [])
+
+    def test_add_refuses_placeholder_plus_unfinished_segments(self):
+        set_source(self.cfg,
+                   "<p><em>Hello</em> world</p>\n<p>Another sentence here</p>\n")
+        self.cfg.require_latin = True
+        write_chunk(self.cfg,
+                    "Hello world\n@@@SEG 002@@@\nAnother sentence here")
+        with self.assertRaises(SystemExit):
+            review.add(self.cfg, "c", 1)
+        self.assertEqual(review.read(self.cfg), [])
+
     def test_registered_chunks_do_not_count_as_progress(self):
         from epubzh import chunks
 
