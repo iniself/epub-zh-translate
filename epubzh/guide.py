@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from . import config as config_mod
-from . import chunks, markup, toc
+from . import chunks, markup, review, toc
 
 # Cap the glossary injected into a small-profile prompt. Large profiles get
 # the full guide (and therefore the full glossary) instead.
@@ -908,10 +908,13 @@ def next_target(cfg, resume=False):
     ``repair`` instead of being skipped as ``done``.
     """
     index = chunks.read_index(cfg)
+    registered = {(row["file"], row["chunk"]) for row in review.read(cfg)}
     if not resume:
         for filename in _ordered_index(cfg, index):
             counts = chunks.chunk_counts(cfg, filename, index[filename])
             for ci, nseg in enumerate(counts, 1):
+                if (filename, ci) in registered:
+                    continue
                 state, last = _chunk_prompt_state(cfg, filename, ci, nseg)
                 if state != "done":
                     return (filename, ci, state, last, nseg)
@@ -921,6 +924,8 @@ def next_target(cfg, resume=False):
     for filename in _ordered_index(cfg, index):
         counts = chunks.chunk_counts(cfg, filename, index[filename])
         for ci, nseg in enumerate(counts, 1):
+            if (filename, ci) in registered:
+                continue
             state, last = _chunk_prompt_state(cfg, filename, ci, nseg)
             target = (filename, ci, state, last, nseg)
             if state in ("repair", "partial", "broken"):

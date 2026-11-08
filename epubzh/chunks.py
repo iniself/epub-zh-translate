@@ -901,6 +901,8 @@ def progress(cfg):
 def status(cfg):
     index = read_index(cfg)
     rows = []
+    from . import review
+    review_counts = Counter(row["file"] for row in review.read(cfg))
     cap = ("max %d segments" % cfg.max_segments_per_chunk
            if cfg.max_segments_per_chunk else "no segment cap")
     print("profile: %s (%d words per chunk, %s)"
@@ -919,25 +921,29 @@ def status(cfg):
             elif state == "broken":
                 broken += 1
         rows.append((name, done, len(counts), info["segments"], info["words"],
-                     partial, broken))
+                     partial, broken, review_counts.get(name, 0)))
     total_done = sum(r[1] for r in rows)
     total_chunks = sum(r[2] for r in rows)
     total_partial = sum(r[5] for r in rows)
     total_broken = sum(r[6] for r in rows)
+    total_review = sum(r[7] for r in rows)
     print("%-38s %7s %8s %10s" % ("file", "chunks", "segments", "words"))
-    for name, done, nchunks, segs, words, partial, broken in rows:
+    for name, done, nchunks, segs, words, partial, broken, review_n in rows:
         mark = "done" if done == nchunks else "%d/%d" % (done, nchunks)
         flags = []
         if partial:
             flags.append("%dp" % partial)
         if broken:
             flags.append("%db" % broken)
+        if review_n:
+            flags.append("%dr" % review_n)
         if flags:
             mark += " " + " ".join(flags)
         print("%-38s %7s %8d %10d" % (name, mark, segs, words))
     print("\nchunks: %d/%d translated" % (total_done, total_chunks))
-    if total_partial or total_broken:
-        print("needs attention: %d partial, %d broken" % (total_partial, total_broken))
+    if total_partial or total_broken or total_review:
+        print("needs attention: %d partial, %d broken, %d manual review"
+              % (total_partial, total_broken, total_review))
     return total_done, total_chunks
 
 
@@ -979,52 +985,37 @@ def _looks_translatable(body):
     return True
 
 
-def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
-               placeholders=False):
-    """Check translated chunks of one source file. Returns problems.
-
-    ``only_chunk`` restricts validation to a single chunk, so a translator
-    working on one chunk does not see "file missing" for its siblings.
-    ``skip_missing`` omits chunks that have not been started yet; project-wide
-    checks use it so expected missing files do not drown out real errors.
-    ``fix`` (default on) first removes duplicate segment blocks produced by a
-    bad append boundary, extra closing markers for single placeholders, and
-    CJK/Latin spacing gaps. Ambiguous duplicates are reported instead of
-    guessed at. Pass ``fix=False`` for a read-only check. ``placeholders``
-    additionally re-wraps pair markers whose source text survived verbatim; it
-    is a fallback for ``--fix``, which cannot restore missing placeholders on
-    its own.
-    """
+def _load_source(cfg, name):
+    """Return ``(chunks, info, error)`` for one source file."""
     index = read_index(cfg)
     if name not in index:
-        return ["%s: not in index" % name]
+        return None, None, "%s: not in index" % name
     info = index[name]
-    stem = Path(name).stem
     src_path = cfg.source_dir / cfg.text_dir / name
     if info.get("sha256") and file_sha256(src_path) != info["sha256"]:
-        return ["%s: source changed since extract, re-run `epubzh extract --force`"
-                % name]
+        return None, info, ("%s: source changed since extract, re-run "
+                            "`epubzh extract --force`" % name)
     work, atoms = markup.atomize(src_path.read_text(encoding="utf-8"),
                                  cfg.protect_blocks)
     segs = markup.extract_segments(work, require_latin=cfg.require_latin)
-    chunks = markup.chunk_segments(segs, cfg.words_per_chunk,
+    groups = markup.chunk_segments(segs, cfg.words_per_chunk,
                                    cfg.max_segments_per_chunk)
-    problems = []
-    if len(chunks) != info["chunks"]:
-        problems.append("%s: chunk count changed (%d vs %d), re-run extract"
-                        % (name, len(chunks), info["chunks"]))
-    if only_chunk is not None:
-        if only_chunk < 1 or only_chunk > len(chunks):
-            return problems + ["%s: chunk must be 1..%d" % (name, len(chunks))]
-        targets = [(only_chunk, chunks[only_chunk - 1])]
-    else:
-        targets = list(enumerate(chunks, 1))
-    for ci, chunk in targets:
-        path = cfg.zh_dir / chunk_name(stem, ci)
-        if skip_missing and not path.exists():
-            continue
-        if fix:
-            report = repair_chunk(path, chunk)
+    return groups, info, None
+
+
+def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
+                 verbose=True):
+    """Check one chunk. Returns ``(problems, issues)``.
+
+    ``issues`` carries one dict per failing segment so callers can register
+    the source text and the current translation for manual repair.
+    """
+    stem = Path(name).stem
+    path = cfg.zh_dir / chunk_name(stem, ci)
+    problems, issues = [], []
+    if fix:
+        report = repair_chunk(path, chunk)
+        if verbose:
             if report.dropped:
                 print("  fixed %s chunk %d: dropped out-of-range seg %s"
                       % (name, ci, _ranges(report.dropped)))
@@ -1049,8 +1040,9 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
                                    for num, count in report.spaced)
                 print("  fixed %s chunk %d: inserted CJK/Latin space(s) %s"
                       % (name, ci, detail))
-        if placeholders:
-            fixes = restore_placeholders(path, chunk)
+    if placeholders:
+        fixes = restore_placeholders(path, chunk)
+        if verbose:
             for num, wrapped, placed in fixes:
                 if wrapped:
                     print("  fixed %s chunk %d: auto-wrapped seg %d around %s"
@@ -1064,36 +1056,99 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
             if fixes:
                 print("  note: placeholder position may be approximate; "
                       "verify the rendered formatting")
-        translated, verbatim, err = parse_translation(
-            path, len(chunk), chunk, mode=getattr(cfg, "mode", None))
-        if err:
-            problems.append("%s chunk %d: %s" % (name, ci, err))
+    translated, verbatim, err = parse_translation(
+        path, len(chunk), chunk, mode=getattr(cfg, "mode", None))
+    if err:
+        problems.append("%s chunk %d: %s" % (name, ci, err))
+        issues.append({"seg": 0, "kind": "structure", "source": "",
+                       "translation": "", "detail": err})
+        return problems, issues
+    # Report chunk-local numbers, matching the @@@SEG nnn@@@ markers the
+    # translator edits. Document-wide numbers would point at the wrong
+    # line whenever the chunk is not the first one.
+    offset = chunk[0].index
+    width = len(chunk)
+    for seg, text, keep in zip(chunk, translated, verbatim):
+        pos = seg.index + 1 - offset
+        bad = seg.check(text)
+        if bad:
+            full = "placeholder" in bad or "stray" in bad
+            problems.append("%s chunk %d seg %d/%d: %s%s"
+                            % (name, ci, pos, width, bad,
+                               _context(seg, text, 0 if full else 110)))
+            issues.append({"seg": pos,
+                           "kind": "placeholder" if full else "other",
+                           "source": seg.text, "translation": text,
+                           "detail": bad})
             continue
-        # Report chunk-local numbers, matching the @@@SEG nnn@@@ markers the
-        # translator edits. Document-wide numbers would point at the wrong
-        # line whenever the chunk is not the first one.
-        offset = chunk[0].index
-        width = len(chunk)
-        for seg, text, keep in zip(chunk, translated, verbatim):
-            pos = seg.index + 1 - offset
-            bad = seg.check(text)
-            if bad:
-                full = "placeholder" in bad or "stray" in bad
-                problems.append("%s chunk %d seg %d/%d: %s%s"
-                                % (name, ci, pos, width, bad,
-                                   _context(seg, text, 0 if full else 110)))
-                continue
-            if keep:
-                continue
-            body = markup.strip_placeholders(text).strip()
-            short = len(body) <= 3 and " " not in body
-            if cfg.require_latin and re.search("[A-Za-z]", seg.text) \
-                    and not CJK_RE.search(body) and not short \
-                    and _looks_translatable(body):
-                problems.append(
-                    "%s chunk %d seg %d/%d: not translated (if this is a "
-                    "name, address, code, or heading that should stay in the "
-                    "source language, add a separate @@@VERBATIM@@@ line in "
-                    "this segment)%s"
-                    % (name, ci, pos, width, _context(seg, text)))
+        if keep:
+            continue
+        body = markup.strip_placeholders(text).strip()
+        short = len(body) <= 3 and " " not in body
+        if cfg.require_latin and re.search("[A-Za-z]", seg.text) \
+                and not CJK_RE.search(body) and not short \
+                and _looks_translatable(body):
+            detail = ("not translated (if this is a name, address, code, or "
+                      "heading that should stay in the source language, add a "
+                      "separate @@@VERBATIM@@@ line in this segment)")
+            problems.append("%s chunk %d seg %d/%d: %s%s"
+                            % (name, ci, pos, width, detail,
+                               _context(seg, text)))
+            issues.append({"seg": pos, "kind": "not-translated",
+                           "source": seg.text, "translation": text,
+                           "detail": detail})
+    return problems, issues
+
+
+def chunk_issues(cfg, name, ci):
+    """Return failing segments of one chunk for the manual-review registry."""
+    groups, _, err = _load_source(cfg, name)
+    if err:
+        raise SystemExit(err)
+    chunks = groups
+    if ci < 1 or ci > len(chunks):
+        raise SystemExit("%s: chunk must be 1..%d" % (name, len(chunks)))
+    _, issues = _check_chunk(cfg, name, ci, chunks[ci - 1], fix=True,
+                             placeholders=False, verbose=False)
+    return issues
+
+
+def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
+               placeholders=False):
+    """Check translated chunks of one source file. Returns problems.
+
+    ``only_chunk`` restricts validation to a single chunk, so a translator
+    working on one chunk does not see "file missing" for its siblings.
+    ``skip_missing`` omits chunks that have not been started yet; project-wide
+    checks use it so expected missing files do not drown out real errors.
+    ``fix`` (default on) first removes duplicate segment blocks produced by a
+    bad append boundary, extra closing markers for single placeholders, and
+    CJK/Latin spacing gaps. Ambiguous duplicates are reported instead of
+    guessed at. Pass ``fix=False`` for a read-only check. ``placeholders``
+    additionally re-wraps pair markers whose source text survived verbatim; it
+    is a fallback for ``--fix``, which cannot restore missing placeholders on
+    its own.
+    """
+    groups, info, err = _load_source(cfg, name)
+    if err:
+        return [err]
+    chunks = groups
+    problems = []
+    if len(chunks) != info["chunks"]:
+        problems.append("%s: chunk count changed (%d vs %d), re-run extract"
+                        % (name, len(chunks), info["chunks"]))
+    if only_chunk is not None:
+        if only_chunk < 1 or only_chunk > len(chunks):
+            return problems + ["%s: chunk must be 1..%d" % (name, len(chunks))]
+        targets = [(only_chunk, chunks[only_chunk - 1])]
+    else:
+        targets = list(enumerate(chunks, 1))
+    stem = Path(name).stem
+    for ci, chunk in targets:
+        path = cfg.zh_dir / chunk_name(stem, ci)
+        if skip_missing and not path.exists():
+            continue
+        found, _ = _check_chunk(cfg, name, ci, chunk, fix=fix,
+                                placeholders=placeholders)
+        problems.extend(found)
     return problems

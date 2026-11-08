@@ -151,12 +151,15 @@ work：/path/to/books/mybook-zh-project/work
 1. 如果项目目录没有 `book.toml`：先 `init` + `extract`，确认所有文件 round-trip 通过后再开始翻译。
    如果已有 `book.toml`：先运行 `next`，从它给出的那一块继续；需要看总进度时再
    运行 `status`。**不要先跑全项目 `check`**，未开始的分块会刷屏。不要覆盖已有译文。
+   如果 `work/needs_review.tsv` 非空，说明上次留下了人工介入项：先运行 `review`
+   复检（人工可能已经改好），清单清空后再继续。
 2. 阅读目录、前言和前两章（按书里实际存在的内容）：有 `work/toc.tsv` 就补译其中的标题；
    没有就跳过，不要手工创建——它只从原书的 NCX / 导航文档生成。没有前言就从正文第一章开始，
    不足两章按实际章节数读；封面、版权页、目录页不算正文第一章。然后完善 `work/terms.tsv`，
    运行 `guide`；它会生成 `work/TRANSLATION_GUIDE.md`。
 3. 正文按分块翻译，流程见下面的“分块翻译”；每个分块写完后用 `check --chunk --fix` 自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译）。
-4. 全部完成后运行 `build` 和 `verify`；XML、内部链接、锚点、占位符必须零错误。构建前运行一次
+4. 全部完成后先运行 `review`：清单为空才运行 `build` 和 `verify`；非空就停下，把
+   `work/needs_review.tsv` 和条数报给用户。XML、内部链接、锚点、占位符必须零错误。构建前运行一次
    `terms-audit`，检查术语一致性（默认只报告，不阻断）。
 5. 不要修改源 EPUB；不要手工改 `work/build` 里的文件，所有修改通过 `work/zh/`、`work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 完成。
 
@@ -194,6 +197,12 @@ TOOL="<skill-base>/epubzh-run"
 #     成对标记只在“译文中原样保留源文字”时套回；
 #     页码/脚注等不可见单锚点按相对位置近似补回
 "$TOOL" check --config book.toml <stem> --chunk <n> --fix --placeholders
+
+# 6. 兜底后仍过不了：登记人工介入，然后继续下一块
+"$TOOL" review --config book.toml --add <stem> --chunk <n>
+
+# 7. 人工改完后复检：清空清单、重查已登记的块，仍有问题会重新登记
+"$TOOL" review --config book.toml
 
 # 兜底：subagent 空转（只回复计划、不写文件）时改用极简提示词
 "$TOOL" prompt <stem> --chunk <n> --brief
@@ -243,11 +252,12 @@ TOOL="<skill-base>/epubzh-run"
    按自检末尾的 `N problem(s)` 判断进展：数字变小就继续，没变小就停，最多 6 轮。
    只有数字没变小、且只剩占位符错误、兜底还没用过时，才用
    `--fix --placeholders` 再查一次；其它错误不要用它。不要问用户；
+   轮次用尽仍不过 → 运行 `review --add <stem> --chunk <n>` 登记，正文写一行
+   `⚠️ 已登记人工介入：<文件> 第 N 块`，然后继续下一块，不要停整本；
 4. 通过后直接运行下一次 `next`，并在正文写一行：
    `✅ 进度 X/Y · 已完成 <上一块文件> 第 N 块`（X/Y 取新 `next` 的
    `progress:` 行），紧接着写下一轮的 `📊` 行。**不要问用户“是否继续”**，连续执行到
    `next` 返回 `all chunks translated`。只有以下情况才停下来问用户：
-   - 自检错误数不再减少，或达到 6 轮上限；
    - 需要用户确认术语、书名、目录等无法自动决定的内容。
    提问方式：优先用客户端的原生 `question` 工具，按上文给出的完整 schema 传参；不熟悉
    schema 或工具不可用，就用纯文本编号列出选项并停下。工具调用失败时不要默认继续，
@@ -338,7 +348,27 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
    - **不要第 3 次把同一份提示词派给同一个模型**：重复派发只会重复空转。
 3. 同一分块最多派发 2 次（正常一次 + brief 一次）；之后走第 2 条的兜底。
 4. 子代理的完成回复应为 `已写入 <path>；check OK` 或 `失败：<原因>`；没有 `check OK`
-   就按未完成处理。
+   就按未完成处理。用完 6 轮和兜底仍不过时，按下一节登记，不要停整本。
+
+#### 人工介入清单
+
+兜底后仍过不了的分块登记到 `work/needs_review.tsv`，翻译继续往下走：
+
+```bash
+# 登记（替换该块之前的登记，不会重复追加）
+"$TOOL" review --config book.toml --add <stem> --chunk <n>
+# 人工改完后复检；返回 0 表示清单已清空
+"$TOOL" review --config book.toml
+```
+
+- 一行一个段：`file`、`chunk`、`seg`、`kind`（`placeholder` / `not-translated` /
+  `structure` / `other`）、`source`（该段原文）、`translation`（当前译文）、`detail`（报错）。
+- 登记后 `next` 会跳过该块继续翻后面的块；不要反复重派它。
+- 全部翻完、`next` 返回 `all chunks translated` 后先跑 `review`：清单为空才 `build`；
+  非空就停，把文件和条数报给用户。
+- 用户改完说继续时先跑 `review`：它清空清单、重查所有登记过的块，仍有问题会重新写回
+  清单并再次提示；空则继续构建。`build` 也会拒绝在清单非空时合并。
+- `status` 里的 `Nr` 表示该文件有 N 条人工介入项。
 
 弱模型（4B 级激活、thinking 很长的模型）建议单独配一个翻译 subagent，降低推理深度，
 必要时加 `steps` 上限。示例（opencode 配置，模型 ID 按实际填写）：

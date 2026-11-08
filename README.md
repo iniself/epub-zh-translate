@@ -10,6 +10,7 @@ The skill drives a local, dependency-free pipeline (`epubzh`) that:
 - replaces inline markup with placeholders;
 - translates in parallel chunks;
 - checks segment counts, placeholders, and untranslated text (CJK/Latin spacing is auto-fixed by `--fix`);
+- records unsolvable chunks for manual review, keeps translating, and gates the merge;
 - rebuilds the EPUB from the original source and verifies XML, links, and anchors.
 
 ## Requirements

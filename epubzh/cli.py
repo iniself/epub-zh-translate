@@ -5,7 +5,8 @@ import os
 import sys
 from pathlib import Path
 
-from . import assemble, chunks, config, guide, markup, pre, terms_audit, toc
+from . import (assemble, chunks, config, guide, markup, pre, review,
+               terms_audit, toc)
 
 
 def _shown(base, path):
@@ -253,6 +254,32 @@ def cmd_check(args):
     return 1 if all_problems else 0
 
 
+def cmd_review(args):
+    cfg = config.load(args.config)
+    if args.add:
+        if args.chunk is None:
+            raise SystemExit("--add needs --chunk <n>")
+        rows = review.add(cfg, args.add, args.chunk)
+        path = review.path_for(cfg)
+        if not rows:
+            print("%s chunk %d: no problems; nothing registered"
+                  % (args.add, args.chunk))
+            return 0
+        print("registered %d manual review item(s) in %s" % (len(rows), path))
+        for row in rows:
+            print("  seg %d: %s" % (row["seg"], row["kind"]))
+        return 0
+    if args.chunk is not None:
+        raise SystemExit("--chunk only makes sense together with --add")
+    remaining = review.recheck(cfg)
+    path = review.path_for(cfg)
+    if remaining:
+        print("%d manual review item(s) remain in %s" % (len(remaining), path))
+        return 1
+    print("no manual review items")
+    return 0
+
+
 def cmd_next(args):
     cfg = config.load(args.config)
     target = guide.next_target(cfg, resume=args.resume)
@@ -412,6 +439,14 @@ def build_parser():
                         "approximate position; run only after the translator "
                         "failed to restore them")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("review",
+                       help="register or re-check chunks that need manual editing")
+    p.add_argument("--add", metavar="FILE",
+                   help="register the failing segments of one chunk (file name "
+                        "or stem)")
+    p.add_argument("--chunk", type=int, help="chunk number with --add")
+    p.set_defaults(func=cmd_review)
 
     p = sub.add_parser("next", help="show and write the next chunk prompt")
     p.add_argument("--resume", action="store_true",

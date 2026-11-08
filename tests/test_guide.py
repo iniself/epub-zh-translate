@@ -246,7 +246,8 @@ class AlignedContractTest(unittest.TestCase):
 class NextTargetTest(unittest.TestCase):
     def test_skips_done_chunks_and_returns_repair(self):
         index = {"chapter.html": {"chunks": 2}}
-        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"))
+        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"),
+                              work_dir=Path("/tmp/missing-work"))
         with mock.patch.object(guide.chunks, "read_index", return_value=index), \
                 mock.patch.object(guide.chunks, "chunk_counts",
                                   return_value=[1, 1]), \
@@ -257,7 +258,8 @@ class NextTargetTest(unittest.TestCase):
 
     def test_strict_order_starts_first_pending_before_later_repair(self):
         index = {"chapter.html": {"chunks": 2}}
-        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"))
+        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"),
+                              work_dir=Path("/tmp/missing-work"))
         with mock.patch.object(guide.chunks, "read_index", return_value=index), \
                 mock.patch.object(guide.chunks, "chunk_counts",
                                   return_value=[1, 1]), \
@@ -268,7 +270,8 @@ class NextTargetTest(unittest.TestCase):
 
     def test_resume_prioritizes_existing_work(self):
         index = {"chapter.html": {"chunks": 2}}
-        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"))
+        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"),
+                              work_dir=Path("/tmp/missing-work"))
         with mock.patch.object(guide.chunks, "read_index", return_value=index), \
                 mock.patch.object(guide.chunks, "chunk_counts",
                                   return_value=[1, 1]), \
@@ -279,13 +282,30 @@ class NextTargetTest(unittest.TestCase):
 
     def test_returns_none_when_everything_is_done(self):
         index = {"chapter.html": {"chunks": 1}}
-        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"))
+        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"),
+                              work_dir=Path("/tmp/missing-work"))
         with mock.patch.object(guide.chunks, "read_index", return_value=index), \
                 mock.patch.object(guide.chunks, "chunk_counts",
                                   return_value=[1]), \
                 mock.patch.object(guide, "_chunk_prompt_state",
                                   return_value=("done", 1)):
             self.assertIsNone(guide.next_target(cfg))
+
+    def test_skips_chunks_registered_for_manual_review(self):
+        index = {"chapter.html": {"chunks": 2}}
+        cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"),
+                              work_dir=Path("/tmp/missing-work"))
+        rows = [{"file": "chapter.html", "chunk": 1, "seg": 1,
+                 "kind": "placeholder", "source": "", "translation": "",
+                 "detail": ""}]
+        with mock.patch.object(guide.chunks, "read_index", return_value=index), \
+                mock.patch.object(guide.chunks, "chunk_counts",
+                                  return_value=[1, 1]), \
+                mock.patch.object(guide.review, "read", return_value=rows), \
+                mock.patch.object(guide, "_chunk_prompt_state",
+                                  return_value=("repair", 1)):
+            target = guide.next_target(cfg, resume=True)
+        self.assertEqual(target, ("chapter.html", 2, "repair", 1, 1))
 
 
 if __name__ == "__main__":

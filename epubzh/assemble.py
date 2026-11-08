@@ -8,7 +8,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from . import chunks, markup, pre, spacing, toc
+from . import chunks, markup, pre, review, spacing, toc
 
 
 def _well_formed(text):
@@ -112,6 +112,11 @@ def _merge_file(cfg, name):
 
 def assemble(cfg, only=None):
     """Rebuild work/build from the source tree and translated chunks."""
+    pending = review.read(cfg)
+    if pending:
+        raise SystemExit(
+            "%d manual review item(s) in %s; fix them and run `epubzh review` "
+            "before merging" % (len(pending), review.path_for(cfg)))
     if not cfg.source_dir.exists():
         raise SystemExit("source_dir not found: %s (run `epubzh unpack`)"
                          % cfg.source_dir)
