@@ -307,6 +307,13 @@ words_per_chunk = %d
 max_segments_per_chunk = %d
 require_latin = true
 
+[translate]
+# Output format for new chunks: "aligned" (default) or "inline".
+# Set this before translating the first chunk. Switching later makes existing
+# chunks fail validation, because each book is expected to use one format
+# from start to finish.
+mode = "aligned"
+
 [typography]
 spacing = true
 css = "default"

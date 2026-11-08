@@ -91,6 +91,10 @@ work：/path/to/books/mybook-zh-project/work
 用户只说“模型比较弱/容易卡住”而没给档位时，按弱模型程度在 `small` / `mini` / `tiny`
 里选，建议从 `mini` 起步；仍卡住再降到 `tiny`。
 
+翻译格式不用问用户：`init` 默认写入 `[translate] mode = "aligned"`。用户如果想用旧的
+`inline` 格式，让他自己在**开始翻译第一块之前**修改 `book.toml`；开翻后不要切换，
+否则已有分块会因格式不符被判错，只能逐块重译。
+
 用户调用模板（用户只写文件名，不需要绝对路径）：
 
 ```text
@@ -278,10 +282,12 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 - 分块提示词必须用 `prompt` 生成，不要自己拼；`large` 带完整规范，其余档位带规则卡 +
   本块术语 + 上文；`--brief` 生成极简版，只用于空转兜底。
-- 如果 `book.toml` 有 `[translate] mode = "aligned"`，生成的提示词会使用
+- 新项目由 `init` 默认写入 `[translate] mode = "aligned"`，生成的提示词使用
   `@@@TEXT@@@` / `@@@SPAN k@@@`。此时不要把成对 `⟦n⟧` / `⟦/n⟧` 写进 TEXT：
   TEXT 只保留单标记，每个 SPAN 必须逐字出现在 TEXT 中。`--placeholders` 对
   aligned 文件不生效；报错时按提示词改 SPAN 或补 SPAN，其余流程不变。
+  **一本书只用一种模式**：用户要 `inline` 必须在开翻前自己改 `book.toml`；
+  已经开始翻译后不要切换，也不要用旧项目去试新格式。
 - 一个 subagent 只做一个分块，不要让它顺手翻译别的分块。
 - 派发子代理时必须带 `description`（3–5 词）和 `prompt`；漏字段会被工具拒绝，
   按报错补齐后重试，不要退回主会话翻译。
@@ -525,6 +531,8 @@ CONFIG="$PROJECT/book.toml"
 - `--profile` 只在 `init` 时决定（`large`/`small`/`mini`/`tiny`）。已有译文后用
   `extract --profile` 切换会被拒绝；`--force` 会重切分块，等于要求重译，除非用户
   明确同意，不要使用。
+- `[translate] mode` 默认由 `init` 写成 `aligned`。用户要 `inline` 必须自己在开翻前
+  改 `book.toml`；已有译文后不要改模式，否则旧分块全部要重译。
 - `next` 默认按阅读顺序返回第一个不是 `done` 的分块，并生成对应 prompt；它不会修改
   译文。用户要求从上次中断处继续时用 `next --resume`，它先返回 repair / partial /
   broken，再按顺序补 pending。
