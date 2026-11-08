@@ -99,6 +99,7 @@ def cmd_init(args):
                          source_title=args.source_title, profile=profile)
     cfg = config.load(cfg_path)
     guide.seed_terms(cfg)
+    guide.seed_notes(cfg)
     if source.is_file():
         assemble.unpack(cfg)
         layout = config.detect_extract_layout(cfg)
@@ -202,6 +203,7 @@ def cmd_extract(args):
     toc.write_toc_tsv(cfg)
     pre.collect(cfg)
     guide.seed_terms(cfg)
+    guide.seed_notes(cfg)
     print("profile=%s files=%d segments=%d chunks=%d words=%d"
           % (cfg.profile, len(index), total_segs, total_chunks, total_words))
     if warnings:
@@ -280,6 +282,18 @@ def cmd_review(args):
     return 0
 
 
+def _print_style_hint(cfg):
+    """Remind the caller to fill style.md once the first chapter is done."""
+    name = guide.style_note_hint(cfg)
+    if not name:
+        return
+    print("style: %s finished, but %s is still the empty template"
+          % (name, cfg.style_file))
+    print("action: write %s now (10-15 example pairs plus hard decisions), "
+          "then keep translating; later chunks pick it up automatically"
+          % cfg.style_file)
+
+
 def cmd_next(args):
     cfg = config.load(args.config)
     target = guide.next_target(cfg, resume=args.resume)
@@ -287,6 +301,7 @@ def cmd_next(args):
         done, total = chunks.progress(cfg)
         print("progress: %d/%d chunks" % (done, total))
         print("all chunks translated")
+        _print_style_hint(cfg)
         return 0
     filename, chunk, state, last, nseg = target
     stem = Path(filename).stem
@@ -324,6 +339,7 @@ def cmd_next(args):
     print("action: %s" % action)
     print("check: %s check --config %s %s --chunk %d --fix"
           % (guide._module_cmd(cfg), guide.quote_path(cfg.path), stem, chunk))
+    _print_style_hint(cfg)
     return 0
 
 
@@ -361,6 +377,7 @@ def cmd_pre(args):
 def cmd_guide(args):
     cfg = config.load(args.config)
     guide.seed_terms(cfg)
+    guide.seed_notes(cfg)
     guide.render_guide(cfg)
 
 

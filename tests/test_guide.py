@@ -308,5 +308,71 @@ class NextTargetTest(unittest.TestCase):
         self.assertEqual(target, ("chapter.html", 2, "repair", 1, 1))
 
 
+class StyleNoteTest(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.cfg = SimpleNamespace(
+            work_dir=self.root / "work",
+            zh_dir=self.root / "zh",
+            style_file=self.root / "work" / "style.md",
+            decisions_file=self.root / "work" / "decisions.md")
+
+    def test_seed_notes_writes_templates_and_keeps_edits(self):
+        guide.seed_notes(self.cfg)
+        self.assertEqual(self.cfg.style_file.read_text(encoding="utf-8"),
+                         guide.STYLE_TEMPLATE)
+        self.assertEqual(self.cfg.decisions_file.read_text(encoding="utf-8"),
+                         guide.DECISIONS_TEMPLATE)
+        self.cfg.style_file.write_text("# 风格基准\n\n- 用「你」\n",
+                                       encoding="utf-8")
+        guide.seed_notes(self.cfg)
+        self.assertIn("用「你」",
+                      self.cfg.style_file.read_text(encoding="utf-8"))
+
+    def test_template_is_not_filled_but_an_edit_is(self):
+        guide.seed_notes(self.cfg)
+        self.assertFalse(guide.note_is_filled(self.cfg.style_file,
+                                              guide.STYLE_TEMPLATE))
+        self.cfg.style_file.write_text(guide.STYLE_TEMPLATE + "\n- 示例\n",
+                                       encoding="utf-8")
+        self.assertTrue(guide.note_is_filled(self.cfg.style_file,
+                                             guide.STYLE_TEMPLATE))
+        self.assertFalse(guide.note_is_filled(self.root / "missing.md",
+                                              guide.STYLE_TEMPLATE))
+
+    def test_hint_ignores_single_chunk_files_and_returns_first_chapter(self):
+        index = {"front.html": {"chunks": 1}, "chapter.html": {"chunks": 2},
+                 "later.html": {"chunks": 2}}
+        guide.seed_notes(self.cfg)
+        with mock.patch.object(guide.chunks, "chunk_counts",
+                               side_effect=lambda cfg, name, info: [1] * info["chunks"]), \
+                mock.patch.object(guide.chunks, "chunk_state",
+                                  return_value=("done", 1)):
+            self.assertEqual(guide.style_note_hint(self.cfg, index),
+                             "chapter.html")
+
+    def test_hint_disappears_after_style_is_filled(self):
+        index = {"chapter.html": {"chunks": 2}}
+        guide.seed_notes(self.cfg)
+        with mock.patch.object(guide.chunks, "chunk_counts",
+                               return_value=[1, 1]), \
+                mock.patch.object(guide.chunks, "chunk_state",
+                                  return_value=("done", 1)):
+            self.assertEqual(guide.style_note_hint(self.cfg, index),
+                             "chapter.html")
+        self.cfg.style_file.write_text("# 风格基准\n\n- 用「你」\n",
+                                       encoding="utf-8")
+        self.assertIsNone(guide.style_note_hint(self.cfg, index))
+
+    def test_hint_waits_for_a_fully_done_chapter(self):
+        index = {"chapter.html": {"chunks": 2}}
+        guide.seed_notes(self.cfg)
+        with mock.patch.object(guide.chunks, "chunk_counts",
+                               return_value=[1, 1]), \
+                mock.patch.object(guide.chunks, "chunk_state",
+                                  side_effect=[("done", 1), ("partial", 1)]):
+            self.assertIsNone(guide.style_note_hint(self.cfg, index))
+
+
 if __name__ == "__main__":
     unittest.main()

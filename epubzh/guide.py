@@ -42,6 +42,42 @@ def seed_terms(cfg):
     print("wrote %s (edit this glossary before translating)" % cfg.terms_tsv)
 
 
+# Both files are injected into later chunk prompts once they have content. The
+# templates stay as unfilled placeholders: writing them keeps the expected
+# location and format visible, and lets `next` notice that the first chapter is
+# done but the style notes were never filled in.
+STYLE_TEMPLATE = """# 风格基准
+
+<!-- 第一章全部通过后填写：10–15 组英中对照例句，加上硬决定（人称、术语首次
+出现格式、标点、句长）。填好后本文件会自动进入后续每个分块的提示词。 -->
+"""
+
+DECISIONS_TEMPLATE = """# 已定译法与风格决定
+
+<!-- 每章通过后追加：本章新定的译法、句式取舍，以及放弃某个方案的原因。
+填好后本文件会自动进入后续每个分块的提示词。 -->
+"""
+
+
+def seed_notes(cfg):
+    """Create empty style/decisions templates when they are missing."""
+    cfg.work_dir.mkdir(parents=True, exist_ok=True)
+    for path, template in ((cfg.style_file, STYLE_TEMPLATE),
+                           (cfg.decisions_file, DECISIONS_TEMPLATE)):
+        if not path.exists():
+            path.write_text(template, encoding="utf-8")
+
+
+def note_is_filled(path, template):
+    """True when a notes file exists and differs from its template."""
+    if not path.exists():
+        return False
+    try:
+        return path.read_text(encoding="utf-8").strip() != template.strip()
+    except OSError:
+        return False
+
+
 def render_guide_text(cfg):
     """Rendered guide text plus the number of glossary rows."""
     template = config_mod.DEFAULT_GUIDE_TEMPLATE.read_text(encoding="utf-8")
@@ -678,10 +714,10 @@ def _build_prompt(cfg, name, chunk, index, full=False):
 
     context = []
     style = cfg.style_file
-    if style.exists():
+    if note_is_filled(style, STYLE_TEMPLATE):
         context.append(("风格基准（沿用这些取舍）", style.read_text(encoding="utf-8")[-1200:]))
     decisions = cfg.decisions_file
-    if decisions.exists():
+    if note_is_filled(decisions, DECISIONS_TEMPLATE):
         context.append(("已定译法与风格决定", decisions.read_text(encoding="utf-8")[-1200:]))
     label, tail = _preceding_translation(cfg, name, chunk, index)
     if tail:
@@ -891,6 +927,41 @@ def _ordered_index(cfg, index):
         return (0, rank if rank is not None else 10 ** 9, name)
 
     return sorted(index, key=key)
+
+
+def first_finished_multi_chunk(cfg, index=None):
+    """First multi-chunk file whose chunks all pass the numbering check.
+
+    Single-chunk files are ignored: front matter and part dividers finish
+    long before any real chapter, so they say nothing about style stability.
+    ``chunk_state`` only looks at segment numbers, which is deliberate; a
+    placeholder repair still means the chapter is not finished.
+    """
+    if index is None:
+        index = chunks.read_index(cfg)
+    for filename in _ordered_index(cfg, index):
+        counts = chunks.chunk_counts(cfg, filename, index[filename])
+        if len(counts) < 2:
+            continue
+        stem = Path(filename).stem
+        states = [chunks.chunk_state(
+            cfg.zh_dir / chunks.chunk_name(stem, ci), nseg)[0]
+            for ci, nseg in enumerate(counts, 1)]
+        if all(state == "done" for state in states):
+            return filename
+    return None
+
+
+def style_note_hint(cfg, index=None):
+    """Name the file to report when style.md is still empty.
+
+    Returns ``None`` once the notes are filled in, so the hint disappears for
+    good after the first edit. It is a reminder, not a build gate: a book with
+    no style notes still translates, just less consistently.
+    """
+    if note_is_filled(cfg.style_file, STYLE_TEMPLATE):
+        return None
+    return first_finished_multi_chunk(cfg, index)
 
 
 def next_target(cfg, resume=False):
