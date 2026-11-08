@@ -268,19 +268,26 @@ def cmd_next(args):
     if state == "partial":
         detail = (", partial: %d/%d segments done; continue from segment %d"
                   % (last, nseg, last + 1))
-        action = ("read the prompt and append from segment %d; "
-                  "do not use --resume" % (last + 1))
+        action = ("dispatch one subagent with the prompt file to append from "
+                  "segment %d (do not use --resume); if unavailable or the "
+                  "call fails, continue in the main session" % (last + 1))
     elif state == "repair":
         detail = ", needs repair"
-        action = ("read the prompt and repair only the reported segments; "
-                  "do not rewrite the whole file")
+        action = ("dispatch one subagent with the prompt file to repair only "
+                  "the reported segments; if unavailable or the call fails, "
+                  "repair them in the main session; do not rewrite the whole "
+                  "file")
     elif state == "broken":
         detail = ", broken numbering"
-        action = ("read the prompt and fix segment numbering first; "
-                  "do not rewrite unless it cannot be repaired")
+        action = ("dispatch one subagent with the prompt file to fix segment "
+                  "numbering first; if unavailable or the call fails, do it "
+                  "in the main session; do not rewrite unless it cannot be "
+                  "repaired")
     else:
-        action = ("read the prompt and execute only this chunk; "
-                  "do not run a project-wide check")
+        action = ("dispatch one subagent with the prompt file; it executes "
+                  "only this chunk; do not run a project-wide check; if "
+                  "unavailable or the call fails, translate it in the main "
+                  "session")
     done, total = chunks.progress(cfg)
     print("next: %s chunk %d (%d segments)%s" % (
         filename, chunk, nseg, detail))
