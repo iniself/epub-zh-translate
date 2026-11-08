@@ -1,8 +1,10 @@
 """Tests for the manual-review registry."""
 import hashlib
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -96,6 +98,44 @@ class ReviewRegistryTest(unittest.TestCase):
             "file": "c.xhtml", "chunk": 1, "seg": 1, "kind": "placeholder",
             "source": "s", "translation": "t", "detail": "d"}])
         self.assertEqual(chunks.progress(self.cfg), (0, 1))
+
+    def test_recheck_requeues_untranslated_chunk(self):
+        set_source(self.cfg, "<p>Hello world</p>\n")
+        self.cfg.require_latin = True
+        write_chunk(self.cfg, "Hello world")
+        review.write(self.cfg, [{
+            "file": "c.xhtml", "chunk": 1, "seg": 1, "kind": "not-translated",
+            "source": "Hello world", "translation": "Hello world",
+            "detail": "not translated"}])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            remaining = review.recheck(self.cfg)
+        self.assertEqual(remaining, [])
+        self.assertEqual(review.read(self.cfg), [])
+        self.assertIn("requeued", out.getvalue())
+
+    def test_recheck_requeues_whole_chunk_when_any_segment_is_unfinished(self):
+        set_source(self.cfg,
+                   "<p><em>Hello</em> world</p>\n<p>Another sentence here</p>\n")
+        self.cfg.require_latin = True
+        write_chunk(self.cfg,
+                    "Hello world\n@@@SEG 002@@@\nAnother sentence here")
+        review.write(self.cfg, [{
+            "file": "c.xhtml", "chunk": 1, "seg": 1, "kind": "placeholder",
+            "source": "", "translation": "", "detail": "placeholder mismatch"}])
+        with redirect_stdout(io.StringIO()):
+            remaining = review.recheck(self.cfg)
+        self.assertEqual(remaining, [])
+        self.assertFalse(review.path_for(self.cfg).exists())
+
+    def test_recheck_requeues_missing_chunk(self):
+        review.write(self.cfg, [{
+            "file": "c.xhtml", "chunk": 1, "seg": 1, "kind": "structure",
+            "source": "", "translation": "", "detail": "file missing"}])
+        with redirect_stdout(io.StringIO()):
+            remaining = review.recheck(self.cfg)
+        self.assertEqual(remaining, [])
+        self.assertFalse(review.path_for(self.cfg).exists())
 
     def test_assemble_refuses_a_pending_registry(self):
         review.write(self.cfg, [{
