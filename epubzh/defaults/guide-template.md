@@ -156,6 +156,7 @@ Building on the content summarization techniques from chapter 3, this chapter gu
   段尾都可以）；确实需要翻译的，只改报错的这一段。
 - `edit` 返回 identical、找不到 oldString 或多处匹配：不要重试，直接 `write`
   覆盖整个分块。
-- 同一分块最多 3 轮“编辑 + 自检”（按分块计，不按单条报错计）。只有同一段同一个
-  占位符错误连续 2 轮仍在，才用 `--placeholders` 兜底一次；其它错误不要用它。
-  3 轮仍不过就回复一行 `失败：<原因>` 并结束。
+- 每轮“编辑 + 自检”= 改点名段 + 跑一次自检，最多 6 轮。按自检末尾的
+  `N problem(s)` 判断进展：数字变小就继续，没变小就停。只有数字没变小、且只剩
+  占位符错误、兜底还没用过时，才用 `--placeholders` 再查一次；其它错误不要用它。
+  停止时回复一行 `失败：<原因>` 并结束。

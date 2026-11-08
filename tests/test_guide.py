@@ -116,10 +116,11 @@ class ContractTest(unittest.TestCase):
         self.assertIn("没有编辑过", text)
         self.assertIn("不得", text)
 
-    def test_chunk_rounds_are_capped_at_three(self):
+    def test_repair_stops_when_problem_count_stops_shrinking(self):
         text = contract("pending")
-        self.assertIn("最多 3 轮", text)
-        self.assertIn("连续 2 轮", text)
+        self.assertIn("最多 6 轮", text)
+        self.assertIn("数字变小", text)
+        self.assertIn("没变小", text)
         self.assertIn("失败：<原因>", text)
 
 

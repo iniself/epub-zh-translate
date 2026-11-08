@@ -402,9 +402,9 @@ def _aligned_contract(cfg, stem, chunk, dst, state, last, nseg):
    - `source nesting cannot be reproduced`：保持原文区间的顺序和嵌套，不要移动区间。
    - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
      保留，并在段内单独加一行 `@@@VERBATIM@@@`。
-5. 同一分块最多 3 轮“编辑 + 自检”（按分块计，不按单条报错计）。aligned 模式
-   没有 `--placeholders` 兜底，只能改 TEXT 或 SPAN；不要问用户，3 轮仍不过就
-   回复一行 `失败：<原因>` 并结束。
+5. 每轮 = 改 TEXT/SPAN + 自检；用自检末尾的 `N problem(s)` 判断进展，最多 6 轮。
+   数字变小就继续，没变小就停（aligned 模式没有 `--placeholders` 兜底）。
+   停止时回复一行 `失败：<原因>`，不要问用户。
 6. 完成后只回复一行：`已写入 %s；check OK`
 """ % (first, second, check_cmd, dst)
 
@@ -512,9 +512,12 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
      把闭标记移回该区间译文之后，保持原文的嵌套关系。
    - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
      保留，并在段内单独加一行 `@@@VERBATIM@@@`。
-5. 同一分块最多 3 轮“编辑 + 自检”（按分块计，不按单条报错计）。只有同一段
-   同一个占位符错误连续 2 轮仍在，才追加 `--placeholders` 兜底一次；其它错误
-   不要用它，也不要问用户。3 轮仍不过就回复一行 `失败：<原因>` 并结束。
+5. 每轮 = 改点名段 + 自检；用自检末尾的 `N problem(s)` 判断进展，最多 6 轮：
+   - 数字变小 → 继续下一轮；
+   - 没变小 → 只剩占位符错误且没用过兜底时，跑一次
+     `check --chunk --fix --placeholders` 再自检；仍没变小就停；
+   - 其它错误不要用兜底，直接停。
+   停止时回复一行 `失败：<原因>`，不要问用户。
 6. 完成后只回复一行：`已写入 %s；check OK`
 """ % (first, second, step3, check_cmd, dst)
 
@@ -753,7 +756,8 @@ def _build_brief_prompt(cfg, name, chunk, index):
             "`@@@VERBATIM@@@`。",
             "5. 写完运行下面的命令，按报错逐段修；只跑 `--fix` 不算修复：",
             "   `%s`" % check_cmd,
-            "   同一分块最多 3 轮；仍不过就回复 `失败：<原因>`。",
+            "   每轮只改报错的段，最多 6 轮；按 `N problem(s)` 是否变小决定继续，"
+            "没变小就回复 `失败：<原因>`。",
             "6. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
             % dst,
         ]) + "\n"
@@ -781,10 +785,10 @@ def _build_brief_prompt(cfg, name, chunk, index):
         "3. 写完运行下面的命令，按报错逐段修；缺失的占位符要照原文补回，"
         "`--fix` 不会自动补：",
         "   `%s`" % check_cmd,
-        "   报错只改报错的那一段，最多 3 轮；只跑 `--fix` 不算修复，没有编辑过"
-        "不许回复失败；",
-        "   只有占位符错误连续两轮仍在才加 `--placeholders`，仍不过就回复"
-        " `失败：<原因>`。",
+        "   每轮只改报错的段，最多 6 轮；按 `N problem(s)` 是否变小决定继续。"
+        "只跑 `--fix` 不算修复，没有编辑过不许回复失败；",
+        "   数字没变小且只剩占位符错误、还没用过兜底时，才加 `--placeholders`"
+        " 再查一次；仍不过就回复 `失败：<原因>`。",
         "4. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
         % dst,
     ]) + "\n"
