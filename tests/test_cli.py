@@ -33,12 +33,14 @@ class HintLinesTest(unittest.TestCase):
 
 
 class NextActionTest(unittest.TestCase):
-    def run_next(self, state, last=0, style=None, decisions=None):
+    def _run_next(self, state, last=0, style=None, decisions=None,
+                  target_missing=False):
         cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"), path="/tmp/book.toml",
+                              segs_dir=Path("/tmp/segs"),
                               work_dir=Path("/tmp/missing-work"),
                               style_file=Path("/tmp/missing-work/style.md"),
                               decisions_file=Path("/tmp/missing-work/decisions.md"))
-        target = ("chapter.html", 1, state, last, 4)
+        target = None if target_missing else ("chapter.html", 1, state, last, 4)
         out = io.StringIO()
         with mock.patch.object(cli.config, "load", return_value=cfg), \
                 mock.patch.object(cli.guide, "seed_notes"), \
@@ -55,9 +57,12 @@ class NextActionTest(unittest.TestCase):
                 mock.patch.object(cli.guide, "quote_path",
                                   return_value="'/tmp/book.toml'"), \
                 redirect_stdout(out):
-            cli.cmd_next(SimpleNamespace(config="/tmp/book.toml",
-                                         resume=False, brief=False))
-        return out.getvalue()
+            code = cli.cmd_next(SimpleNamespace(config="/tmp/book.toml",
+                                                resume=False, brief=False))
+        return out.getvalue(), code
+
+    def run_next(self, state, **kwargs):
+        return self._run_next(state, **kwargs)[0]
 
     def test_pending_action_prefers_a_subagent(self):
         out = self.run_next("pending")
@@ -72,14 +77,30 @@ class NextActionTest(unittest.TestCase):
         self.assertIn("append from segment 3", self.run_next("partial", last=2))
 
     def test_style_hint_names_the_file_and_the_action(self):
-        out = self.run_next("pending", style="chapter.html")
+        out, code = self._run_next("pending", style="chapter.html")
         self.assertIn("style: chapter.html finished", out)
         self.assertIn("action: write", out)
+        self.assertEqual(code, 1)
 
     def test_decisions_hint_names_the_file_and_the_action(self):
-        out = self.run_next("pending", decisions="chapter.html")
+        out, code = self._run_next("pending", decisions="chapter.html")
         self.assertIn("decisions: chapter.html finished", out)
         self.assertIn("append this chapter", out)
+        self.assertEqual(code, 1)
+
+    def test_pending_notes_block_the_chunk(self):
+        out, code = self._run_next("pending", style="chapter.html")
+        self.assertEqual(code, 1)
+        self.assertIn("next: blocked by pending notes", out)
+        self.assertIn("blocked: fill the notes above", out)
+        self.assertNotIn("prompt:", out)
+
+    def test_pending_notes_block_the_final_message_too(self):
+        out, code = self._run_next("pending", style="chapter.html",
+                                   target_missing=True)
+        self.assertEqual(code, 1)
+        self.assertIn("all chunks translated", out)
+        self.assertIn("blocked: fill the notes above", out)
 
     def test_hints_are_silent_when_notes_are_current(self):
         out = self.run_next("pending")

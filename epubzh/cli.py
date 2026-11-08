@@ -282,28 +282,27 @@ def cmd_review(args):
     return 0
 
 
-def _print_style_hint(cfg):
-    """Remind the caller to fill style.md once the first chapter is done."""
-    name = guide.style_note_hint(cfg)
-    if not name:
-        return
-    print("style: %s finished, but %s is still the empty template"
-          % (name, cfg.style_file))
-    print("action: write %s now (10-15 example pairs plus hard decisions), "
-          "then keep translating; later chunks pick it up automatically"
-          % cfg.style_file)
-
-
-def _print_decisions_hint(cfg, before=None):
-    """Remind the caller to append the finished chapter's decisions."""
-    name = guide.decisions_note_hint(cfg, before=before)
-    if not name:
-        return
-    print("decisions: %s finished, but %s has not been updated since"
-          % (name, cfg.decisions_file))
-    print("action: append this chapter's new renderings, wording choices, and "
-          "rejected options to %s, then continue; later chunks pick it up "
-          "automatically" % cfg.decisions_file)
+def _print_note_hints(cfg, before=None):
+    """Print pending style/decisions notes and return their file names."""
+    style_name = guide.style_note_hint(cfg)
+    if style_name:
+        stem = Path(style_name).stem
+        print("style: %s finished, but %s needs content"
+              % (style_name, cfg.style_file))
+        print("action: write %s now: read %s and %s, pick 10-15 example pairs "
+              "plus hard decisions (at least %d content lines); do not defer"
+              % (cfg.style_file,
+                 cfg.segs_dir / (stem + ".*.txt"),
+                 cfg.zh_dir / (stem + ".*.txt"),
+                 guide.MIN_STYLE_LINES))
+    decisions_name = guide.decisions_note_hint(cfg, before=before)
+    if decisions_name:
+        print("decisions: %s finished, but %s has not been updated since"
+              % (decisions_name, cfg.decisions_file))
+        print("action: append this chapter's new renderings, wording choices, "
+              "and rejected options to %s, then continue"
+              % cfg.decisions_file)
+    return style_name, decisions_name
 
 
 def cmd_next(args):
@@ -314,10 +313,18 @@ def cmd_next(args):
         done, total = chunks.progress(cfg)
         print("progress: %d/%d chunks" % (done, total))
         print("all chunks translated")
-        _print_style_hint(cfg)
-        _print_decisions_hint(cfg)
+        if any(_print_note_hints(cfg)):
+            print("blocked: fill the notes above, then run `next` again")
+            return 1
         return 0
     filename, chunk, state, last, nseg = target
+    if any(_print_note_hints(cfg, before=filename)):
+        done, total = chunks.progress(cfg)
+        print("progress: %d/%d chunks" % (done, total))
+        print("next: blocked by pending notes (would be %s chunk %d)"
+              % (filename, chunk))
+        print("blocked: fill the notes above, then run `next` again")
+        return 1
     stem = Path(filename).stem
     path = guide.prompt(cfg, stem, chunk, quiet=True, brief=args.brief)
     detail = ""
@@ -353,8 +360,6 @@ def cmd_next(args):
     print("action: %s" % action)
     print("check: %s check --config %s %s --chunk %d --fix"
           % (guide._module_cmd(cfg), guide.quote_path(cfg.path), stem, chunk))
-    _print_style_hint(cfg)
-    _print_decisions_hint(cfg, before=filename)
     return 0
 
 

@@ -332,14 +332,23 @@ class StyleNoteTest(unittest.TestCase):
 
     def test_template_is_not_filled_but_an_edit_is(self):
         guide.seed_notes(self.cfg)
-        self.assertFalse(guide.note_is_filled(self.cfg.style_file,
-                                              guide.STYLE_TEMPLATE))
+        self.assertFalse(guide.note_is_filled(self.cfg.style_file))
         self.cfg.style_file.write_text(guide.STYLE_TEMPLATE + "\n- 示例\n",
                                        encoding="utf-8")
+        self.assertTrue(guide.note_is_filled(self.cfg.style_file))
+        self.assertFalse(guide.note_is_filled(self.root / "missing.md"))
+
+    def test_short_note_does_not_clear_the_style_gate(self):
+        guide.seed_notes(self.cfg)
+        self.cfg.style_file.write_text(
+            "# 风格基准\n\n<!-- 说明 -->\n\n- 用「你」\n", encoding="utf-8")
+        self.assertFalse(guide.note_is_filled(self.cfg.style_file,
+                                              guide.MIN_STYLE_LINES))
+        self.cfg.style_file.write_text(
+            "# 风格基准\n\n- 用「你」\n- 短句为主\n- 数字用半角\n",
+            encoding="utf-8")
         self.assertTrue(guide.note_is_filled(self.cfg.style_file,
-                                             guide.STYLE_TEMPLATE))
-        self.assertFalse(guide.note_is_filled(self.root / "missing.md",
-                                              guide.STYLE_TEMPLATE))
+                                             guide.MIN_STYLE_LINES))
 
     def test_hint_ignores_single_chunk_files_and_returns_first_chapter(self):
         index = {"front.html": {"chunks": 1}, "chapter.html": {"chunks": 2},
@@ -361,8 +370,9 @@ class StyleNoteTest(unittest.TestCase):
                                   return_value=("done", 1)):
             self.assertEqual(guide.style_note_hint(self.cfg, index),
                              "chapter.html")
-        self.cfg.style_file.write_text("# 风格基准\n\n- 用「你」\n",
-                                       encoding="utf-8")
+        self.cfg.style_file.write_text(
+            "# 风格基准\n\n- 用「你」\n- 短句为主\n- 数字用半角\n",
+            encoding="utf-8")
         self.assertIsNone(guide.style_note_hint(self.cfg, index))
 
     def test_hint_waits_for_a_fully_done_chapter(self):

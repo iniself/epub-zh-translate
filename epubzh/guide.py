@@ -58,6 +58,10 @@ DECISIONS_TEMPLATE = """# 已定译法与风格决定
 填好后本文件会自动进入后续每个分块的提示词。 -->
 """
 
+# A one-line placeholder should not clear the gate: require a few real lines.
+MIN_STYLE_LINES = 3
+MIN_DECISION_LINES = 1
+
 
 def seed_notes(cfg):
     """Create empty style/decisions templates when they are missing."""
@@ -68,12 +72,31 @@ def seed_notes(cfg):
             path.write_text(template, encoding="utf-8")
 
 
-def note_is_filled(path, template):
-    """True when a notes file exists and differs from its template."""
+def note_content_count(text):
+    """Count real content lines, ignoring headings, blanks, and comments."""
+    count, in_comment = 0, False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+        if stripped.startswith("<!--"):
+            if "-->" not in stripped:
+                in_comment = True
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        count += 1
+    return count
+
+
+def note_is_filled(path, minimum=1):
+    """True when a notes file has at least ``minimum`` content lines."""
     if not path.exists():
         return False
     try:
-        return path.read_text(encoding="utf-8").strip() != template.strip()
+        return note_content_count(path.read_text(encoding="utf-8")) >= minimum
     except OSError:
         return False
 
@@ -714,10 +737,10 @@ def _build_prompt(cfg, name, chunk, index, full=False):
 
     context = []
     style = cfg.style_file
-    if note_is_filled(style, STYLE_TEMPLATE):
+    if note_is_filled(style, MIN_STYLE_LINES):
         context.append(("风格基准（沿用这些取舍）", style.read_text(encoding="utf-8")[-1200:]))
     decisions = cfg.decisions_file
-    if note_is_filled(decisions, DECISIONS_TEMPLATE):
+    if note_is_filled(decisions, MIN_DECISION_LINES):
         context.append(("已定译法与风格决定", decisions.read_text(encoding="utf-8")[-1200:]))
     label, tail = _preceding_translation(cfg, name, chunk, index)
     if tail:
@@ -966,7 +989,7 @@ def style_note_hint(cfg, index=None):
     good after the first edit. It is a reminder, not a build gate: a book with
     no style notes still translates, just less consistently.
     """
-    if note_is_filled(cfg.style_file, STYLE_TEMPLATE):
+    if note_is_filled(cfg.style_file, MIN_STYLE_LINES):
         return None
     return first_finished_multi_chunk(cfg, index)
 
@@ -1011,7 +1034,7 @@ def decisions_note_hint(cfg, before=None, index=None):
     if not finished:
         return None
     path = cfg.decisions_file
-    if not note_is_filled(path, DECISIONS_TEMPLATE):
+    if not note_is_filled(path, MIN_DECISION_LINES):
         return finished[0]
     try:
         stamp = path.stat().st_mtime
