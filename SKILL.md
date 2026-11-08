@@ -5,6 +5,8 @@ description: 使用本地 epubzh 流水线把整本 EPUB 翻译成简体中文�
 
 # EPUB 中文翻译
 
+> 本 skill 以 opencode 为第一目标；其他客户端可以运行 CLI，但工具调用未实测。
+
 ## 一、书籍信息
 
 开始前先向用户确认以下信息。缺少必填项时直接询问，不要猜路径，也不要沿用上一个项目的书名或输出路径：
@@ -30,7 +32,7 @@ OpenCode 的启动目录里。
 
 ### 路径怎么填
 
-以用户启动 opencode 的目录为**会话目录**，它是所有相对路径的唯一基准。
+以用户启动客户端的目录为**会话目录**（opencode 中即启动 opencode 的目录），它是所有相对路径的唯一基准。
 **不要用命令的当前目录**：agent 一旦 `cd`，相对路径的含义就变了。
 
 - 最佳实践：源文件和输出文件都放在会话目录，prompt 里只写文件名。
@@ -197,8 +199,9 @@ TOOL="<skill-base>/epubzh-run"
 "$TOOL" prompt <stem> --chunk <n> --brief
 ```
 
-如果客户端提供 `subagent` 工具，派发分块时按下面的形状传参。`description` 是必填的
-3–5 词标签，漏掉会被工具直接拒绝：
+如果客户端提供 `subagent` 工具，派发分块时按下面的形状传参（工具名和参数名按
+客户端对应，下面以 opencode 为例）。`description` 是必填的 3–5 词标签，漏掉会被
+工具直接拒绝：
 
 ```json
 {
@@ -208,15 +211,22 @@ TOOL="<skill-base>/epubzh-run"
 }
 ```
 
-新建子代理只传 `agent`、`description`、`prompt`，**不要传 `sessionID`**；只有续派
-上一次调用返回的子代理时才原样使用它的 `sessionID`。自己编造 `ses_...` 会报
-`Subagent session not found`。
+新建子代理只传 `agent`、`description`、`prompt`，**不要传续派/恢复参数**（opencode
+叫 `sessionID`）；只有续派上一次调用返回的子代理时才原样使用它的真实 ID。编造
+`ses_...` 这类 ID 会让客户端去找一个不存在的子代理（opencode 报
+`Subagent session not found`）。
 
 参数校验失败（例如 `description: Missing key`）时，按报错补齐字段重试一次；仍失败
 就直接在当前会话翻译该块，不要反复试，也不要因为一次调用被拒就整本代劳。
 
-本流程不需要 `execute`：派发子代理用 `subagent`，跑命令用 `shell`。
-需要脚本化调用多个工具时仍可用 code mode，但不要拿它代替这两个工具。
+本流程不需要代码执行沙箱（opencode 的 `execute`/code mode）：派发子代理用
+`subagent`，跑命令用 `shell`。需要脚本化调用多个工具时仍可用，但不要拿它代替
+这两个工具。
+
+客户端缺少某项能力时，先用该客户端的等价方式完成；没有等价方式再降级，并在回复里
+说明降级原因。不要自创工具名，不要默默跳过步骤，也不要对同一个不存在的工具反复
+重试。常见降级举例：没有子代理 → 当前会话逐块翻译；没有提问工具 → 编号选项纯文本
+提问并停下；没有 `edit` → 用 `write` 重写整个文件。其他能力缺失按同样原则处理。
 
 ### 继续已有项目（包括小模型）
 
@@ -256,7 +266,7 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 - 分块提示词必须用 `prompt` 生成，不要自己拼；`large` 带完整规范，其余档位带规则卡 +
   本块术语 + 上文；`--brief` 生成极简版，只用于空转兜底。
 - 一个 subagent 只做一个分块，不要让它顺手翻译别的分块。
-- 派发 subagent 时必须带 `description`（3–5 词）和 `prompt`；漏字段会被工具拒绝，
+- 派发子代理时必须带 `description`（3–5 词）和 `prompt`；漏字段会被工具拒绝，
   按报错补齐后重试，不要退回主会话翻译。
 - 子代理如果反复说“我将翻译”“Actually, I'll just translate it”却不动手，说明它没有按
   提示词执行：不要重发长提示词，按“主会话看门狗”第 2 条改用 `--brief`。
@@ -411,7 +421,7 @@ macOS / Linux 用单引号或双引号；Windows PowerShell 用单引号（路�
 TOOL="<skill-base>/epubzh-run"
 # Windows PowerShell: $TOOL = "<skill-base>\epubzh-run.cmd"
 # Windows 直接拼绝对路径，不要照抄下面的 case/dirname 写法。
-SESSION="/path/to/books"      # 用户启动 opencode 的目录
+SESSION="/path/to/books"      # 启动客户端的目录（会话目录）
 SOURCE="mybook.epub"          # 在会话目录时只写文件名
 OUTPUT="mybook-zh.epub"       # 在会话目录时只写文件名
 TITLE="中文书名"
