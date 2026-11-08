@@ -121,9 +121,22 @@ def collect(cfg, name, ci):
 
 
 def add(cfg, name, ci):
-    """Register a chunk's problems, replacing any earlier rows for it."""
+    """Register a chunk's problems, replacing any earlier rows for it.
+
+    Untranslated segments are rejected: they are unfinished work, not a
+    manual-review problem. The translator must translate them (or mark
+    genuinely verbatim text), so registering can never be used to skip a
+    chunk that still contains source-language prose.
+    """
     name = _resolve(cfg, name)
     fresh = collect(cfg, name, ci)
+    untranslated = [row for row in fresh if row["kind"] == "not-translated"]
+    if untranslated:
+        raise SystemExit(
+            "%s chunk %d: %d segment(s) are not translated; translate them "
+            "or mark genuinely verbatim text with @@@VERBATIM@@@. Manual "
+            "review only accepts placeholder/structure failures."
+            % (name, ci, len(untranslated)))
     rows = [row for row in read(cfg)
             if not (row["file"] == name and row["chunk"] == ci)]
     rows.extend(fresh)
@@ -147,6 +160,9 @@ def recheck(cfg):
                              if row["file"] == name and row["chunk"] == ci)
             continue
         if issues:
+            if any(issue["kind"] == "not-translated" for issue in issues):
+                print("  !! %s chunk %d: untranslated segments cannot be "
+                      "registered; fix them in work/zh" % (name, ci))
             remaining.extend(issues)
         else:
             cleared.append((name, ci))

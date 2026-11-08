@@ -35,6 +35,14 @@ def write_chunk(cfg, body):
                                         encoding="utf-8")
 
 
+def set_source(cfg, html):
+    source = cfg.source_dir / cfg.text_dir / "c.xhtml"
+    source.write_text(html, encoding="utf-8")
+    index = {"c.xhtml": {"chunks": 1, "sha256": hashlib.sha256(
+        source.read_bytes()).hexdigest()}}
+    cfg.index_file.write_text(json.dumps(index), encoding="utf-8")
+
+
 class ReviewRegistryTest(unittest.TestCase):
     def setUp(self):
         self.cfg = make_cfg(Path(tempfile.mkdtemp()))
@@ -69,6 +77,25 @@ class ReviewRegistryTest(unittest.TestCase):
                "source": "a\tb", "translation": "甲\n乙", "detail": "x"}
         review.write(self.cfg, [row])
         self.assertEqual(review.read(self.cfg), [row])
+
+    def test_add_refuses_untranslated_segments(self):
+        set_source(self.cfg, "<p>Hello world</p>\n")
+        self.cfg.require_latin = True
+        write_chunk(self.cfg, "Hello world")
+        with self.assertRaises(SystemExit):
+            review.add(self.cfg, "c", 1)
+        self.assertEqual(review.read(self.cfg), [])
+
+    def test_registered_chunks_do_not_count_as_progress(self):
+        from epubzh import chunks
+
+        set_source(self.cfg, "<p>Hello world</p>\n")
+        write_chunk(self.cfg, "你好世界")
+        self.assertEqual(chunks.progress(self.cfg), (1, 1))
+        review.write(self.cfg, [{
+            "file": "c.xhtml", "chunk": 1, "seg": 1, "kind": "placeholder",
+            "source": "s", "translation": "t", "detail": "d"}])
+        self.assertEqual(chunks.progress(self.cfg), (0, 1))
 
     def test_assemble_refuses_a_pending_registry(self):
         review.write(self.cfg, [{

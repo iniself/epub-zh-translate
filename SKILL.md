@@ -381,12 +381,16 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 - 一行一个段：`file`、`chunk`、`seg`、`kind`（`placeholder` / `not-translated` /
   `structure` / `other`）、`source`（该段原文）、`translation`（当前译文）、`detail`（报错）。
+- 只接受 `placeholder` / `structure` 这类修不动的问题；`not-translated` 会被直接拒绝
+  ——那是没翻完，必须继续翻译，或在确实要保留原文时标 `@@@VERBATIM@@@`。
+- 被登记的块**不计入 `translated` 进度**：`status` 里按未完成算，`next` 的进度也会
+  把它排除。登记不是进度。
 - 登记后 `next` 会跳过该块继续翻后面的块；不要反复重派它。
-- 全部翻完、`next` 返回 `all chunks translated` 后先跑 `review`：清单为空才 `build`；
-  非空就停，把文件和条数报给用户。
+- 全部翻完时 `next` 显示 `X/Y chunks (N in manual review)`；先跑 `review`：清单为空
+  才 `build`，非空就停，把文件和条数报给用户。
 - 用户改完说继续时先跑 `review`：它清空清单、重查所有登记过的块，仍有问题会重新写回
   清单并再次提示；空则继续构建。`build` 也会拒绝在清单非空时合并。
-- `status` 里的 `Nr` 表示该文件有 N 条人工介入项。
+- `status` 里的 `Nr` 表示该文件有 N 条人工介入项；这些块按未完成计，不再算 `done`。
 
 弱模型（4B 级激活、thinking 很长的模型）建议单独配一个翻译 subagent，降低推理深度，
 必要时加 `steps` 上限。示例（opencode 配置，模型 ID 按实际填写）：

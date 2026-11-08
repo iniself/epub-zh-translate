@@ -311,8 +311,15 @@ def cmd_next(args):
     target = guide.next_target(cfg, resume=args.resume)
     if not target:
         done, total = chunks.progress(cfg)
-        print("progress: %d/%d chunks" % (done, total))
-        print("all chunks translated")
+        pending = review.read(cfg)
+        suffix = (" (%d in manual review)" % len(pending)) if pending else ""
+        print("progress: %d/%d chunks%s" % (done, total, suffix))
+        if pending:
+            print("all chunks attempted; manual review items remain")
+            print("next: fix the review items, then run `review`; `build` "
+                  "refuses while the list is non-empty")
+        else:
+            print("all chunks translated")
         if any(_print_note_hints(cfg)):
             print("blocked: fill the notes above, then run `next` again")
             return 1
@@ -480,8 +487,9 @@ def build_parser():
     p = sub.add_parser("review",
                        help="register or re-check chunks that need manual editing")
     p.add_argument("--add", metavar="FILE",
-                   help="register the failing segments of one chunk (file name "
-                        "or stem)")
+                   help="register placeholder/structure failures of one chunk "
+                        "(file name or stem); untranslated segments are "
+                        "rejected")
     p.add_argument("--chunk", type=int, help="chunk number with --add")
     p.set_defaults(func=cmd_review)
 

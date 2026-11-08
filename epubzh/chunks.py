@@ -883,7 +883,10 @@ def chunk_state(path, nseg):
 
 
 def progress(cfg):
-    """Return (done, total) chunk counts for the whole project."""
+    """Return (done, total) chunk counts, excluding manual-review chunks."""
+    from . import review
+
+    registered = {(row["file"], row["chunk"]) for row in review.read(cfg)}
     index = read_index(cfg)
     done = total = 0
     for name in index:
@@ -893,7 +896,7 @@ def progress(cfg):
         for ci, nseg in enumerate(counts, 1):
             total += 1
             state, _ = chunk_state(cfg.zh_dir / chunk_name(stem, ci), nseg)
-            if state == "done":
+            if state == "done" and (name, ci) not in registered:
                 done += 1
     return done, total
 
@@ -902,7 +905,9 @@ def status(cfg):
     index = read_index(cfg)
     rows = []
     from . import review
-    review_counts = Counter(row["file"] for row in review.read(cfg))
+    pending = review.read(cfg)
+    registered = {(row["file"], row["chunk"]) for row in pending}
+    review_counts = Counter(row["file"] for row in pending)
     cap = ("max %d segments" % cfg.max_segments_per_chunk
            if cfg.max_segments_per_chunk else "no segment cap")
     print("profile: %s (%d words per chunk, %s)"
@@ -914,7 +919,7 @@ def status(cfg):
         done = partial = broken = 0
         for ci, nseg in enumerate(counts, 1):
             state, _ = chunk_state(cfg.zh_dir / chunk_name(stem, ci), nseg)
-            if state == "done":
+            if state == "done" and (name, ci) not in registered:
                 done += 1
             elif state == "partial":
                 partial += 1

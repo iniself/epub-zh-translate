@@ -34,7 +34,7 @@ class HintLinesTest(unittest.TestCase):
 
 class NextActionTest(unittest.TestCase):
     def _run_next(self, state, last=0, style=None, decisions=None,
-                  target_missing=False):
+                  target_missing=False, registered=None):
         cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"), path="/tmp/book.toml",
                               segs_dir=Path("/tmp/segs"),
                               work_dir=Path("/tmp/missing-work"),
@@ -51,6 +51,8 @@ class NextActionTest(unittest.TestCase):
                                   return_value=style), \
                 mock.patch.object(cli.guide, "decisions_note_hint",
                                   return_value=decisions), \
+                mock.patch.object(cli.review, "read",
+                                  return_value=registered or []), \
                 mock.patch.object(cli.chunks, "progress", return_value=(1, 3)), \
                 mock.patch.object(cli.guide, "_module_cmd",
                                   return_value="epubzh-run"), \
@@ -101,6 +103,16 @@ class NextActionTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("all chunks translated", out)
         self.assertIn("blocked: fill the notes above", out)
+
+    def test_final_message_reports_manual_review(self):
+        row = {"file": "chapter.html", "chunk": 1, "seg": 1,
+               "kind": "placeholder", "source": "", "translation": "",
+               "detail": ""}
+        out, code = self._run_next("pending", target_missing=True,
+                                   registered=[row])
+        self.assertEqual(code, 0)
+        self.assertIn("in manual review", out)
+        self.assertIn("manual review items remain", out)
 
     def test_hints_are_silent_when_notes_are_current(self):
         out = self.run_next("pending")
