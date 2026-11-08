@@ -294,14 +294,28 @@ def _print_style_hint(cfg):
           % cfg.style_file)
 
 
+def _print_decisions_hint(cfg, before=None):
+    """Remind the caller to append the finished chapter's decisions."""
+    name = guide.decisions_note_hint(cfg, before=before)
+    if not name:
+        return
+    print("decisions: %s finished, but %s has not been updated since"
+          % (name, cfg.decisions_file))
+    print("action: append this chapter's new renderings, wording choices, and "
+          "rejected options to %s, then continue; later chunks pick it up "
+          "automatically" % cfg.decisions_file)
+
+
 def cmd_next(args):
     cfg = config.load(args.config)
+    guide.seed_notes(cfg)
     target = guide.next_target(cfg, resume=args.resume)
     if not target:
         done, total = chunks.progress(cfg)
         print("progress: %d/%d chunks" % (done, total))
         print("all chunks translated")
         _print_style_hint(cfg)
+        _print_decisions_hint(cfg)
         return 0
     filename, chunk, state, last, nseg = target
     stem = Path(filename).stem
@@ -340,6 +354,7 @@ def cmd_next(args):
     print("check: %s check --config %s %s --chunk %d --fix"
           % (guide._module_cmd(cfg), guide.quote_path(cfg.path), stem, chunk))
     _print_style_hint(cfg)
+    _print_decisions_hint(cfg, before=filename)
     return 0
 
 

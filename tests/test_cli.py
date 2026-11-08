@@ -33,18 +33,22 @@ class HintLinesTest(unittest.TestCase):
 
 
 class NextActionTest(unittest.TestCase):
-    def run_next(self, state, last=0):
+    def run_next(self, state, last=0, style=None, decisions=None):
         cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"), path="/tmp/book.toml",
                               work_dir=Path("/tmp/missing-work"),
-                              style_file=Path("/tmp/missing-work/style.md"))
+                              style_file=Path("/tmp/missing-work/style.md"),
+                              decisions_file=Path("/tmp/missing-work/decisions.md"))
         target = ("chapter.html", 1, state, last, 4)
         out = io.StringIO()
         with mock.patch.object(cli.config, "load", return_value=cfg), \
+                mock.patch.object(cli.guide, "seed_notes"), \
                 mock.patch.object(cli.guide, "next_target", return_value=target), \
                 mock.patch.object(cli.guide, "prompt",
                                   return_value="/tmp/prompt.md"), \
                 mock.patch.object(cli.guide, "style_note_hint",
-                                  return_value=None), \
+                                  return_value=style), \
+                mock.patch.object(cli.guide, "decisions_note_hint",
+                                  return_value=decisions), \
                 mock.patch.object(cli.chunks, "progress", return_value=(1, 3)), \
                 mock.patch.object(cli.guide, "_module_cmd",
                                   return_value="epubzh-run"), \
@@ -66,6 +70,21 @@ class NextActionTest(unittest.TestCase):
 
     def test_partial_action_resumes_from_the_next_segment(self):
         self.assertIn("append from segment 3", self.run_next("partial", last=2))
+
+    def test_style_hint_names_the_file_and_the_action(self):
+        out = self.run_next("pending", style="chapter.html")
+        self.assertIn("style: chapter.html finished", out)
+        self.assertIn("action: write", out)
+
+    def test_decisions_hint_names_the_file_and_the_action(self):
+        out = self.run_next("pending", decisions="chapter.html")
+        self.assertIn("decisions: chapter.html finished", out)
+        self.assertIn("append this chapter", out)
+
+    def test_hints_are_silent_when_notes_are_current(self):
+        out = self.run_next("pending")
+        self.assertNotIn("style:", out)
+        self.assertNotIn("decisions:", out)
 
 
 if __name__ == "__main__":

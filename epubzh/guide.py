@@ -929,16 +929,15 @@ def _ordered_index(cfg, index):
     return sorted(index, key=key)
 
 
-def first_finished_multi_chunk(cfg, index=None):
-    """First multi-chunk file whose chunks all pass the numbering check.
+def _finished_multi_chunks(cfg, index):
+    """Multi-chunk files whose chunks all pass the numbering check.
 
     Single-chunk files are ignored: front matter and part dividers finish
     long before any real chapter, so they say nothing about style stability.
     ``chunk_state`` only looks at segment numbers, which is deliberate; a
     placeholder repair still means the chapter is not finished.
     """
-    if index is None:
-        index = chunks.read_index(cfg)
+    finished = []
     for filename in _ordered_index(cfg, index):
         counts = chunks.chunk_counts(cfg, filename, index[filename])
         if len(counts) < 2:
@@ -948,8 +947,16 @@ def first_finished_multi_chunk(cfg, index=None):
             cfg.zh_dir / chunks.chunk_name(stem, ci), nseg)[0]
             for ci, nseg in enumerate(counts, 1)]
         if all(state == "done" for state in states):
-            return filename
-    return None
+            finished.append(filename)
+    return finished
+
+
+def first_finished_multi_chunk(cfg, index=None):
+    """First fully translated multi-chunk file, or ``None``."""
+    if index is None:
+        index = chunks.read_index(cfg)
+    same = _finished_multi_chunks(cfg, index)
+    return same[0] if same else None
 
 
 def style_note_hint(cfg, index=None):
@@ -962,6 +969,58 @@ def style_note_hint(cfg, index=None):
     if note_is_filled(cfg.style_file, STYLE_TEMPLATE):
         return None
     return first_finished_multi_chunk(cfg, index)
+
+
+def _newest_chunk_mtime(cfg, filename, index):
+    """Newest mtime among a finished file's translated chunks."""
+    stem = Path(filename).stem
+    counts = chunks.chunk_counts(cfg, filename, index[filename])
+    times = []
+    for ci in range(1, len(counts) + 1):
+        try:
+            times.append((cfg.zh_dir / chunks.chunk_name(stem, ci))
+                         .stat().st_mtime)
+        except OSError:
+            continue
+    return max(times) if times else 0.0
+
+
+def decisions_note_hint(cfg, before=None, index=None):
+    """Name the chapter whose decisions should be appended, if any.
+
+    ``before`` is the file of the chunk `next` is about to hand out; only
+    finished multi-chunk files before it are considered, so working inside a
+    chapter never triggers a reminder about that same chapter.
+
+    The check is time based: decisions.md must be newer than every finished
+    chapter. Reporting the *earliest* chapter older than the file catches a
+    backlog (two chapters finished while nothing was appended) instead of
+    nagging only the latest. Appending once clears the whole backlog without
+    keeping extra state. Rewriting an older chunk later can bring the reminder
+    back once; that is noise, not a wrong instruction.
+    """
+    if index is None:
+        index = chunks.read_index(cfg)
+    finished = _finished_multi_chunks(cfg, index)
+    if before is not None:
+        order = _ordered_index(cfg, index)
+        if before in order:
+            limit = order.index(before)
+            finished = [name for name in finished
+                        if order.index(name) < limit]
+    if not finished:
+        return None
+    path = cfg.decisions_file
+    if not note_is_filled(path, DECISIONS_TEMPLATE):
+        return finished[0]
+    try:
+        stamp = path.stat().st_mtime
+        for filename in finished:
+            if _newest_chunk_mtime(cfg, filename, index) > stamp:
+                return filename
+    except OSError:
+        return finished[0]
+    return None
 
 
 def next_target(cfg, resume=False):

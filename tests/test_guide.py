@@ -1,11 +1,12 @@
 """Regression tests for state-aware chunk prompt generation."""
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from epubzh import guide
+from epubzh import chunks, guide
 
 
 CFG = SimpleNamespace(path=Path("/tmp/book.toml"))
@@ -372,6 +373,84 @@ class StyleNoteTest(unittest.TestCase):
                 mock.patch.object(guide.chunks, "chunk_state",
                                   side_effect=[("done", 1), ("partial", 1)]):
             self.assertIsNone(guide.style_note_hint(self.cfg, index))
+
+
+class DecisionsNoteTest(unittest.TestCase):
+    def setUp(self):
+        root = Path(tempfile.mkdtemp())
+        self.cfg = SimpleNamespace(
+            work_dir=root / "work",
+            zh_dir=root / "zh",
+            style_file=root / "work" / "style.md",
+            decisions_file=root / "work" / "decisions.md")
+        self.cfg.zh_dir.mkdir(parents=True)
+        guide.seed_notes(self.cfg)
+        self.stamp = 1_700_000_000
+
+    def add_chunks(self, stem, count, stamp=None):
+        stamp = self.stamp if stamp is None else stamp
+        for ci in range(1, count + 1):
+            path = self.cfg.zh_dir / chunks.chunk_name(stem, ci)
+            path.write_text("@@@SEG 001@@@\n译文\n", encoding="utf-8")
+            os.utime(path, (stamp, stamp))
+
+    def entry(self, count):
+        return {"chunks": count, "chunk_segments": [1] * count}
+
+    def test_empty_template_points_at_the_finished_chapter(self):
+        self.add_chunks("009_chapter", 2)
+        index = {"009_chapter.xhtml": self.entry(2)}
+        self.assertEqual(guide.decisions_note_hint(self.cfg, index=index),
+                         "009_chapter.xhtml")
+
+    def test_appending_after_the_chapter_clears_the_hint(self):
+        self.add_chunks("009_chapter", 2)
+        self.cfg.decisions_file.write_text("# 已定译法\n\n- 用「你」\n",
+                                           encoding="utf-8")
+        os.utime(self.cfg.decisions_file,
+                 (self.stamp + 100, self.stamp + 100))
+        index = {"009_chapter.xhtml": self.entry(2)}
+        self.assertIsNone(guide.decisions_note_hint(self.cfg, index=index))
+
+    def test_decisions_older_than_the_chapter_still_trigger(self):
+        self.cfg.decisions_file.write_text("# 已定译法\n\n- 用「你」\n",
+                                           encoding="utf-8")
+        os.utime(self.cfg.decisions_file,
+                 (self.stamp - 100, self.stamp - 100))
+        self.add_chunks("009_chapter", 2)
+        index = {"009_chapter.xhtml": self.entry(2)}
+        self.assertEqual(guide.decisions_note_hint(self.cfg, index=index),
+                         "009_chapter.xhtml")
+
+    def test_only_chapters_before_the_current_target_count(self):
+        self.add_chunks("009_chapter", 2)
+        self.add_chunks("010_next", 1)
+        index = {"009_chapter.xhtml": self.entry(2),
+                 "010_next.xhtml": self.entry(2)}
+        self.assertEqual(
+            guide.decisions_note_hint(self.cfg, before="010_next.xhtml",
+                                      index=index),
+            "009_chapter.xhtml")
+        self.assertIsNone(
+            guide.decisions_note_hint(self.cfg, before="009_chapter.xhtml",
+                                      index=index))
+
+    def test_reports_the_earliest_unrecorded_chapter(self):
+        self.add_chunks("009_chapter", 2, stamp=self.stamp)
+        self.add_chunks("010_chapter", 2, stamp=self.stamp + 100)
+        self.cfg.decisions_file.write_text("# 已定译法\n\n- 用「你」\n",
+                                           encoding="utf-8")
+        os.utime(self.cfg.decisions_file,
+                 (self.stamp - 100, self.stamp - 100))
+        index = {"009_chapter.xhtml": self.entry(2),
+                 "010_chapter.xhtml": self.entry(2)}
+        self.assertEqual(guide.decisions_note_hint(self.cfg, index=index),
+                         "009_chapter.xhtml")
+
+    def test_single_chunk_files_never_trigger(self):
+        self.add_chunks("cover", 1)
+        index = {"cover.xhtml": self.entry(1)}
+        self.assertIsNone(guide.decisions_note_hint(self.cfg, index=index))
 
 
 if __name__ == "__main__":
