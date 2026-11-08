@@ -103,6 +103,29 @@ class PlaceholderCollisionTest(unittest.TestCase):
         self.assertIn("\u27e60\u27e7", text)
         self.assertIn("\u27e61\u27e7more\u27e6/1\u27e7", text)
 
+    def test_literal_marker_is_text_not_a_placeholder(self):
+        work, _ = markup.atomize(
+            "<p>输入 \u27e60\u27e7，然后点 <em>开始</em>。</p>", [])
+        seg = markup.extract_segments(work, require_latin=False)[0]
+        self.assertEqual(seg.literals, {"\u27e60\u27e7": 1})
+        self.assertIn("\u27e61\u27e7开始\u27e6/1\u27e7", seg.text)
+        self.assertIsNone(seg.check("输入 \u27e60\u27e7，然后点 \u27e61\u27e7开始\u27e6/1\u27e7。"))
+        self.assertIsNone(seg.check("输入，然后点 \u27e61\u27e7开始\u27e6/1\u27e7。"))
+
+    def test_repair_keeps_literal_marker_and_removes_only_unknown(self):
+        work, _ = markup.atomize(
+            "<p>输入 \u27e60\u27e7，然后点 <em>开始</em>。</p>", [])
+        seg = markup.extract_segments(work, require_latin=False)[0]
+        path = Path(tempfile.mkdtemp()) / "chunk.txt"
+        path.write_text(
+            "@@@SEG 001@@@\n输入 \u27e60\u27e7，然后点 \u27e61\u27e7开始\u27e6/1\u27e7\u27e69\u27e7。\n",
+            encoding="utf-8")
+        report = chunks.repair_chunk(path, [seg])
+        self.assertEqual(report.unknown, [(1, ["\u27e69\u27e7"])])
+        body = path.read_text(encoding="utf-8")
+        self.assertIn("\u27e60\u27e7", body)
+        self.assertNotIn("\u27e69\u27e7", body)
+
 
 class PlaceholderRepairTest(unittest.TestCase):
     def setUp(self):

@@ -203,7 +203,8 @@ def _remove_extra_single_closes(lines, seg):
     which pair to delete would require guessing at meaning.
     """
     body = "\n".join(lines[1:])
-    got = [m.group(0) for m in markup.PH_RE.finditer(body)]
+    got = [m.group(0) for m in markup.PH_RE.finditer(body)
+           if m.group(0) not in seg.literals]
     want = []
     for item in seg.items:
         want.append(item["open"])
@@ -257,7 +258,7 @@ def _remove_unknown_markers(lines, seg):
     removed = []
     for match in list(markup.PH_RE.finditer(body)):
         marker = match.group(0)
-        if marker in valid:
+        if marker in valid or marker in seg.literals:
             continue
         body = body.replace(marker, "", 1)
         removed.append(marker)

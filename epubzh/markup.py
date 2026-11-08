@@ -280,18 +280,23 @@ def has_stray_brackets(text):
 
 
 class Segment(object):
-    __slots__ = ("start", "end", "text", "items", "index")
+    __slots__ = ("start", "end", "text", "items", "index", "literals")
 
-    def __init__(self, start, end, text, items):
+    def __init__(self, start, end, text, items, literals=None):
         self.start = start
         self.end = end
         self.text = text
         self.items = items
         self.index = 0
+        # Marker-shaped text the book itself prints (for example a tutorial
+        # that shows ⟦0⟧ literally). It is not a placeholder and must not
+        # take part in placeholder validation.
+        self.literals = dict(literals or {})
 
     def check(self, translated):
         """Return None when the placeholder set is intact, else a message."""
-        got = [m.group(0) for m in PH_RE.finditer(translated)]
+        got = [m.group(0) for m in PH_RE.finditer(translated)
+               if m.group(0) not in self.literals]
         want = []
         for it in self.items:
             want.append(it["open"])
@@ -505,7 +510,17 @@ def extract_segments(work, warn=None, require_latin=True):
                 return
             start = offsets[parts[0][0]][0]
             end = offsets[parts[-1][1]][1]
-            seg = Segment(start, end, text, run["items"])
+            used = set()
+            for item in run["items"]:
+                used.add(item["open"])
+                if item["close"]:
+                    used.add(item["close"])
+            literals = {}
+            for match in PH_RE.finditer(text):
+                token = match.group(0)
+                if token not in used:
+                    literals[token] = literals.get(token, 0) + 1
+            seg = Segment(start, end, text, run["items"], literals)
             segments.append(seg)
         run = None
 
