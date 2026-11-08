@@ -163,17 +163,18 @@ Write `Chunk profile: <profile>` (or `分块配置：<档位>`, for example
 New projects get `aligned` written by `init`; no extra argument is needed,
 and a book uses one mode from start to finish.
 
-- `aligned` (default): the translator writes one fluent `@@@TEXT@@@` per
-  segment plus one `@@@SPAN k@@@` per paired span. The tool verifies that each
-  SPAN text is an exact substring of TEXT, checks order and nesting against
-  the source, and inserts the original markers. Missing, ambiguous, or
-  conflicting spans are reported instead of producing broken HTML.
-- `inline`: the translator copies `⟦n⟧` / `⟦/n⟧` markers by hand.
+- `aligned` (default): the model writes one fluent `@@@TEXT@@@` per segment
+  plus one `@@@SPAN k@@@` per paired span. The tool verifies that each SPAN
+  text is an exact substring of TEXT, checks order and nesting against the
+  source, and inserts the original markers. Missing, ambiguous, or conflicting
+  spans are reported instead of producing broken HTML.
+- `inline`: the model writes `⟦n⟧` / `⟦/n⟧` markers directly in its translation.
 
-To use the old format, change `mode` to `"inline"` in `book.toml` **before
-translating the first chunk**. Switching after translation has started makes
-existing chunks fail validation, so they would have to be retranslated; do not
-switch mid-book. Mode is a translation-side setting: it never requires
+The model writes these markers into `work/zh/`; you never have to type them
+yourself. To use the old format, change `mode` to `"inline"` in `book.toml`
+**before translating the first chunk**. Switching after translation has started
+makes existing chunks fail validation, so they would have to be retranslated; do
+not switch mid-book. Mode is a translation-side setting: it never requires
 re-running `extract`.
 
 ### Paths
