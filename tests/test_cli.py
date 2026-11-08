@@ -34,7 +34,7 @@ class HintLinesTest(unittest.TestCase):
 
 class NextActionTest(unittest.TestCase):
     def _run_next(self, state, last=0, style=None, decisions=None,
-                  target_missing=False, registered=None):
+                  target_missing=False, registered=None, repair_state=None):
         cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"), path="/tmp/book.toml",
                               segs_dir=Path("/tmp/segs"),
                               work_dir=Path("/tmp/missing-work"),
@@ -53,6 +53,8 @@ class NextActionTest(unittest.TestCase):
                                   return_value=decisions), \
                 mock.patch.object(cli.review, "read",
                                   return_value=registered or []), \
+                mock.patch.object(cli.rounds, "get",
+                                  return_value=repair_state or {}), \
                 mock.patch.object(cli.chunks, "progress", return_value=(1, 3)), \
                 mock.patch.object(cli.guide, "_module_cmd",
                                   return_value="epubzh-run"), \
@@ -113,6 +115,15 @@ class NextActionTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("in manual review", out)
         self.assertIn("manual review items remain", out)
+
+    def test_exhausted_chunk_is_not_dispatched(self):
+        out, code = self._run_next(
+            "repair",
+            repair_state={"exhausted": True, "rounds": 6, "problems": 1})
+        self.assertEqual(code, 0)
+        self.assertIn("exhausted", out)
+        self.assertIn("do not dispatch a subagent", out)
+        self.assertNotIn("dispatch one subagent", out)
 
     def test_hints_are_silent_when_notes_are_current(self):
         out = self.run_next("pending")

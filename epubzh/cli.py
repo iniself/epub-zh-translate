@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from . import (assemble, chunks, config, guide, markup, pre, review,
-               terms_audit, toc)
+               rounds, terms_audit, toc)
 
 
 def _shown(base, path):
@@ -237,6 +237,28 @@ def cmd_check(args):
         problems = chunks.check_file(cfg, name, only_chunk=args.chunk,
                                      fix=args.fix, skip_missing=skip_missing,
                                      placeholders=args.placeholders)
+        if args.chunk:
+            stem = Path(name).stem
+            path = cfg.zh_dir / chunks.chunk_name(stem, args.chunk)
+            state = rounds.update(cfg, name, args.chunk, path, problems)
+            if state.get("rounds"):
+                print("  round %d/%d, %d problem(s)"
+                      % (state["rounds"], rounds.MAX_ROUNDS,
+                         state["problems"]))
+            if (state.get("exhausted") and not state.get("fallback")
+                    and args.fix and not args.placeholders and problems
+                    and rounds.is_placeholder_only(problems)
+                    and getattr(cfg, "mode", "inline") != "aligned"):
+                rounds.mark_fallback(cfg, name, args.chunk)
+                print("  exhausted: auto placeholder fallback")
+                problems = chunks.check_file(
+                    cfg, name, only_chunk=args.chunk, fix=True,
+                    placeholders=True)
+                state = rounds.update(cfg, name, args.chunk, path, problems)
+            if state.get("exhausted") and problems:
+                print("  exhausted: do not dispatch another subagent; the "
+                      "main session must finish this chunk or run "
+                      "`review --add %s --chunk %d`" % (stem, args.chunk))
         all_problems.extend(problems)
         results.append((name, problems))
     for name, problems in results:
@@ -335,6 +357,24 @@ def cmd_next(args):
               % (filename, chunk))
         print("blocked: fill the notes above, then run `next` again")
         return 1
+    repair = rounds.get(cfg, filename, chunk)
+    if repair.get("exhausted"):
+        stem = Path(filename).stem
+        path = guide.prompt(cfg, stem, chunk, quiet=True, brief=args.brief)
+        done, total = chunks.progress(cfg)
+        print("next: %s chunk %d (exhausted: %d round(s), %d problem(s))"
+              % (filename, chunk, repair.get("rounds", 0),
+                 repair.get("problems", 0)))
+        print("progress: %d/%d chunks" % (done, total))
+        print("prompt: %s" % path)
+        print("output: %s" % (cfg.zh_dir / chunks.chunk_name(stem, chunk)))
+        print("action: do not dispatch a subagent; the main session must "
+              "finish this chunk, or run `review --add %s --chunk %d`"
+              % (stem, chunk))
+        print("check: %s check --config %s %s --chunk %d --fix"
+              % (guide._module_cmd(cfg), guide.quote_path(cfg.path), stem,
+                 chunk))
+        return 0
     stem = Path(filename).stem
     path = guide.prompt(cfg, stem, chunk, quiet=True, brief=args.brief)
     detail = ""

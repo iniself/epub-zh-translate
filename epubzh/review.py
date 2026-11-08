@@ -16,6 +16,8 @@ Workflow:
 import csv
 from pathlib import Path
 
+from . import rounds
+
 FIELDS = ("file", "chunk", "seg", "kind", "source", "translation", "detail")
 FILENAME = "needs_review.tsv"
 
@@ -159,6 +161,7 @@ def add(cfg, name, ci):
             if not (row["file"] == name and row["chunk"] == ci)]
     rows.extend(fresh)
     write(cfg, rows)
+    rounds.clear(cfg, name, ci)
     return fresh
 
 
@@ -191,8 +194,10 @@ def recheck(cfg):
         remaining.extend(issues)
     write(cfg, remaining)
     for name, ci, count in requeued:
+        rounds.clear(cfg, name, ci)
         print("  requeued %s chunk %d for translation (%d issue(s))"
               % (name, ci, count))
     for name, ci in cleared:
+        rounds.clear(cfg, name, ci)
         print("  cleared %s chunk %d" % (name, ci))
     return remaining
