@@ -424,13 +424,26 @@ def extract_segments(work, warn=None, require_latin=True):
 
     segments = []
     run = None
+    # A book may print a placeholder-shaped token as ordinary text. Checking
+    # the whole atomized source keeps generated placeholders from colliding
+    # with it; a collision would make a literal token look like markup.
+    occupied = set(re.findall(
+        re.escape(PLACEHOLDER_OPEN) + r"[^" + re.escape(
+            PLACEHOLDER_OPEN + PLACEHOLDER_CLOSE) + r"]*"
+        + re.escape(PLACEHOLDER_CLOSE), work))
+
+    def next_number():
+        while True:
+            number = run["n"]
+            run["n"] += 1
+            if placeholder(number) not in occupied:
+                return number
 
     def add_text(idx, txt):
         run["parts"].append((idx, idx, html.unescape(txt)))
 
     def add_placeholder(idx, html_raw, last_idx=None):
-        k = run["n"]
-        run["n"] += 1
+        k = next_number()
         run["parts"].append((idx, last_idx if last_idx is not None else idx,
                              placeholder(k)))
         run["items"].append({"kind": "single", "open": placeholder(k),
@@ -450,8 +463,7 @@ def extract_segments(work, warn=None, require_latin=True):
         if not visible_text(i + 1, c):
             add_placeholder(i, work[offsets[i][0]:offsets[c][1]], last_idx=c)
             return c + 1
-        k = run["n"]
-        run["n"] += 1
+        k = next_number()
         run["parts"].append((i, i, placeholder(k)))
         run["items"].append({"kind": "pair", "open": placeholder(k),
                              "close": close_placeholder(k),

@@ -191,7 +191,7 @@ def _block_body(lines):
 
 RepairReport = namedtuple("RepairReport",
                           "removed dropped reordered ambiguous placeholders "
-                          "spaced")
+                          "spaced unknown")
 
 
 def _remove_extra_single_closes(lines, seg):
@@ -222,6 +222,42 @@ def _remove_extra_single_closes(lines, seg):
             continue
         number = int(match.group(1)[1:])
         if markup.placeholder(number) not in singles or marker not in body:
+            continue
+        body = body.replace(marker, "", 1)
+        removed.append(marker)
+    if not removed:
+        return lines, []
+    return [lines[0]] + (body.split("\n") if body else []), removed
+
+
+def _remove_unknown_markers(lines, seg):
+    """Drop markers that name no source item in this segment.
+
+    A model sometimes invents ``⟦9⟧`` or copies a marker from a neighbouring
+    segment. Such a token maps to nothing, so deleting it cannot change the
+    visible translation; leaving it in makes ``check`` fail for a purely
+    mechanical reason. Paired markers are not reordered or de-duplicated here.
+    """
+    body = "\n".join(lines[1:])
+    valid = set()
+    for item in seg.items:
+        valid.add(item["open"])
+        if item["close"]:
+            valid.add(item["close"])
+        else:
+            # A closing marker for a single placeholder is a mechanical extra,
+            # not an unknown token; _remove_extra_single_closes handles it.
+            match = markup.PH_RE.fullmatch(item["open"])
+            if match:
+                valid.add(markup.close_placeholder(int(match.group(1))))
+    if not any(marker in body for marker in valid):
+        # The whole block names no source marker. Leave it to the check so a
+        # bad duplicate is not turned into plain text here.
+        return lines, []
+    removed = []
+    for match in list(markup.PH_RE.finditer(body)):
+        marker = match.group(0)
+        if marker in valid:
             continue
         body = body.replace(marker, "", 1)
         removed.append(marker)
@@ -460,6 +496,8 @@ def repair_chunk(path, chunk):
     * remaining blocks are sorted by segment number when out of order;
     * an extra ``⟦/n⟧`` for a single ``⟦n⟧`` is removed (the source has no
       closing marker, so this is unambiguous);
+    * markers that map to no source item in the segment (invented tokens,
+      tokens copied from another segment) are removed;
     * CJK/Latin boundaries get a half-width space, matching what ``build``
       would normalise anyway. Aligned files are left alone because rewriting
       TEXT would desynchronise its SPAN sections.
@@ -469,7 +507,7 @@ def repair_chunk(path, chunk):
     """
     path = Path(path)
     if not path.exists():
-        return RepairReport([], [], False, [], [], [])
+        return RepairReport([], [], False, [], [], [], [])
     aligned = is_aligned_file(path)
     preamble, blocks = _split_blocks(path)
     drop = set()
@@ -518,6 +556,7 @@ def repair_chunk(path, chunk):
         kept.sort(key=lambda block: block[0])
 
     placeholder_fixes = []
+    unknown_fixes = []
     if not aligned:
         # In aligned mode position fixes would desynchronise SPAN text from
         # TEXT; leave them to the aligned parser and the model instead.
@@ -525,7 +564,13 @@ def repair_chunk(path, chunk):
             num, lines = block
             if not 1 <= num <= len(chunk):
                 continue
-            fixed, markers = _remove_extra_single_closes(lines, chunk[num - 1])
+            seg = chunk[num - 1]
+            fixed, unknown = _remove_unknown_markers(lines, seg)
+            if unknown:
+                block[1] = fixed
+                unknown_fixes.append((num, unknown))
+                lines = fixed
+            fixed, markers = _remove_extra_single_closes(lines, seg)
             if markers:
                 block[1] = fixed
                 placeholder_fixes.append((num, markers))
@@ -549,14 +594,14 @@ def repair_chunk(path, chunk):
                 block[1] = out
                 spaced.append((num, total))
 
-    if drop or reordered or placeholder_fixes or spaced:
+    if drop or reordered or placeholder_fixes or unknown_fixes or spaced:
         out = list(preamble)
         for _, lines in kept:
             out.extend(lines)
         path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 
     return RepairReport(removed, sorted(set(dropped)), reordered, ambiguous,
-                        placeholder_fixes, spaced)
+                        placeholder_fixes, spaced, unknown_fixes)
 
 
 def _marker_number(marker):
@@ -1040,6 +1085,12 @@ def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
                     for num, markers in report.placeholders)
                 print("  fixed %s chunk %d: removed extra single-marker "
                       "close(s) %s" % (name, ci, detail))
+            if report.unknown:
+                detail = "; ".join(
+                    "seg %d: %s" % (num, ", ".join(markers))
+                    for num, markers in report.unknown)
+                print("  fixed %s chunk %d: removed unknown placeholder(s) %s"
+                      % (name, ci, detail))
             if report.spaced:
                 detail = ", ".join("seg %d (+%d)" % (num, count)
                                    for num, count in report.spaced)

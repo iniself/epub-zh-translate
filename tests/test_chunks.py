@@ -84,6 +84,25 @@ class RepairChunkTest(unittest.TestCase):
         body = path.read_text(encoding="utf-8")
         self.assertLess(body.index("@@@SEG 001@@@"), body.index("@@@SEG 002@@@"))
 
+    def test_unknown_placeholder_is_removed(self):
+        path = self.write(block(1, "\u27e60\u27e7\u7532\u27e6/0\u27e7\u27e69\u27e7")
+                          + "\n" + block(2, "\u27e60\u27e7\u4e59\u27e6/0\u27e7"))
+        report = chunks.repair_chunk(path, self.chunk)
+        self.assertEqual(report.unknown, [(1, ["\u27e69\u27e7"])])
+        body = path.read_text(encoding="utf-8")
+        self.assertNotIn("\u27e69\u27e7", body)
+        self.assertIn("\u27e60\u27e7\u7532\u27e6/0\u27e7", body)
+
+
+class PlaceholderCollisionTest(unittest.TestCase):
+    def test_literal_placeholder_like_text_is_not_reused(self):
+        work, _ = markup.atomize("<p>text \u27e60\u27e7 and <em>more</em></p>", [])
+        segs = markup.extract_segments(work, require_latin=False)
+        self.assertEqual(len(segs), 1)
+        text = segs[0].text
+        self.assertIn("\u27e60\u27e7", text)
+        self.assertIn("\u27e61\u27e7more\u27e6/1\u27e7", text)
+
 
 class PlaceholderRepairTest(unittest.TestCase):
     def setUp(self):
