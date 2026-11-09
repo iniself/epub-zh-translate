@@ -110,13 +110,13 @@ def _merge_file(cfg, name):
     return len(segs), None, untranslated
 
 
-def assemble(cfg, only=None):
-    """Rebuild work/build from the source tree and translated chunks."""
-    pending = review.read(cfg)
-    if pending:
-        raise SystemExit(
-            "%d manual review item(s) in %s; fix them and run `epubzh review` "
-            "before merging" % (len(pending), review.path_for(cfg)))
+def _build_tree(cfg, only=None):
+    """Rebuild work/build from the source tree and translated chunks.
+
+    Returns the list of files that failed to merge. This is the trial build
+    used by ``build()`` so every blocker can be reported in one pass; it does
+    not check the manual-review registry on its own.
+    """
     if not cfg.source_dir.exists():
         raise SystemExit("source_dir not found: %s (run `epubzh unpack`)"
                          % cfg.source_dir)
@@ -143,6 +143,16 @@ def assemble(cfg, only=None):
         print("\npartial merge (only matched %r); other files remain in source language" % only)
     print("\n%d/%d files merged" % (len(report) - len(errors), len(report)))
     return errors
+
+
+def assemble(cfg, only=None):
+    """Rebuild work/build, refusing while manual-review items remain."""
+    pending = review.read(cfg)
+    if pending:
+        raise SystemExit(
+            "%d manual review item(s) in %s; fix them and run `epubzh review` "
+            "before merging" % (len(pending), review.path_for(cfg)))
+    return _build_tree(cfg, only=only)
 
 
 def install_css(cfg):
@@ -321,13 +331,87 @@ def apply_metadata(cfg):
     pre.apply(cfg)
 
 
+def _term_expectation(en, variants):
+    """Human label for what the glossary expects of one term."""
+    from . import guide
+    if variants == [en]:
+        if not guide.keep_term_is_valid(en):
+            return "译成中文（keep 行不能是整句）"
+        return "保留英文"
+    return "、".join(variants)
+
+
+def _report_terms(rows, limit=10):
+    print("\nterminology: %d term(s) violate the glossary" % len(rows))
+    for misses, hits, en, variants, samples in rows[:limit]:
+        print("  !! [%s] expected %s (%d/%d segments)"
+              % (en, _term_expectation(en, variants), hits, hits + misses))
+        for sample in samples:
+            print("     %s" % sample)
+    if len(rows) > limit:
+        print("  ... %d more term(s)" % (len(rows) - limit))
+
+
+def _report_review(rows, cfg):
+    print("\nmanual review: %d item(s) in %s"
+          % (len(rows), review.path_for(cfg)))
+    for row in rows[:20]:
+        detail = row.get("detail") or ""
+        print("  - %s chunk %d seg %d: %s%s"
+              % (row.get("file", "?"), row.get("chunk", 0), row.get("seg", 0),
+                 row.get("kind", "other"),
+                 (": " + detail) if detail else ""))
+    if len(rows) > 20:
+        print("  ... %d more item(s)" % (len(rows) - 20))
+
+
+def _report_merge(errors):
+    print("\nmerge: %d file(s) failed" % len(errors))
+    for name, err in errors[:20]:
+        print("  - %s: %s" % (name, err.replace("\n", "\n    ")))
+    if len(errors) > 20:
+        print("  ... %d more file(s)" % (len(errors) - 20))
+
+
+def _report_structure(problems):
+    print("\nstructure: %d problem(s) (XML, links, anchors, placeholders)"
+          % len(problems))
+    for problem in problems[:40]:
+        print("  - %s" % problem)
+    if len(problems) > 40:
+        print("  ... %d more problem(s)" % (len(problems) - 40))
+
+
 def build(cfg, only=None, do_package=True):
-    errors = assemble(cfg, only=only)
+    """Trial-build, report every blocker at once, then package when clean.
+
+    The terminology audit and the manual-review gate used to stop the build
+    one after the other, which made the user fix one batch only to discover
+    the next one. Both now run before packaging, together with the trial merge
+    and the XML/link validation, so one report lists everything to fix.
+    """
+    from . import terms_audit
+
+    terms = terms_audit.violations(cfg, only=only)
+    pending = review.read(cfg)
+    errors = _build_tree(cfg, only=only)
     apply_metadata(cfg)
     install_css(cfg)
     problems = validate_tree(cfg)
-    if errors or problems:
-        print("\nbuild stopped: fix the problems above")
+
+    if terms or pending or errors or problems:
+        print("\nbuild stopped: %d terminology, %d manual review, "
+              "%d merge, %d structure problem(s)"
+              % (len(terms), len(pending), len(errors), len(problems)))
+        if terms:
+            _report_terms(terms)
+        if pending:
+            _report_review(pending, cfg)
+        if errors:
+            _report_merge(errors)
+        if problems:
+            _report_structure(problems)
+        print("\nfix everything above, then run the build again")
         return False
     if do_package and not only:
         package(cfg)

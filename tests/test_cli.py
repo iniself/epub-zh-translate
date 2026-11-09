@@ -132,30 +132,25 @@ class NextActionTest(unittest.TestCase):
 
 
 class BuildGateTest(unittest.TestCase):
-    def run_build(self, rows):
+    def run_build(self, ok):
         args = SimpleNamespace(config="/tmp/book.toml", only=None,
                                no_package=False)
         cfg = SimpleNamespace(terms_tsv=Path("/tmp/terms.tsv"))
         out = io.StringIO()
         with mock.patch.object(cli.config, "load", return_value=cfg), \
-                mock.patch.object(cli.terms_audit, "violations",
-                                  return_value=rows), \
                 mock.patch.object(cli.assemble, "build",
-                                  return_value=True) as build, \
+                                  return_value=ok) as build, \
                 redirect_stdout(out):
             code = cli.cmd_build(args)
         return code, out.getvalue(), build
 
-    def test_a_terminology_mismatch_stops_the_build(self):
-        row = (1, 0, "agent", ["智能体"], ["c chunk 1 seg 1: 期望 智能体 — 代理"])
-        code, out, build = self.run_build([row])
+    def test_a_blocked_build_returns_nonzero(self):
+        code, _, build = self.run_build(False)
         self.assertEqual(code, 1)
-        build.assert_not_called()
-        self.assertIn("terminology mismatch", out)
-        self.assertIn("agent", out)
+        build.assert_called_once()
 
-    def test_a_clean_glossary_builds(self):
-        code, out, build = self.run_build([])
+    def test_a_clean_build_returns_zero(self):
+        code, _, build = self.run_build(True)
         self.assertEqual(code, 0)
         build.assert_called_once()
 

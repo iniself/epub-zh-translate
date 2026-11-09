@@ -15,7 +15,8 @@ The skill drives a local, dependency-free pipeline (`epubzh`) that:
 - records unsolvable chunks for manual review, keeps translating, and gates the merge;
 - audits terminology across the book, carries decided renderings into later chunks, and
   supports both "translate to this Chinese term" and "keep this English term" rows;
-  `build` refuses to merge while a registered decision is violated;
+  `build` reports every blocker (terminology, manual review, merge, XML/links) in one
+  pass and refuses to package while any remains;
 - rebuilds the EPUB from the original source and verifies XML, links, and anchors.
 
 ## Requirements
@@ -272,8 +273,9 @@ starting a new project.
 3. Generates `work/TRANSLATION_GUIDE.md`.
 4. Generates one prompt per chunk under `work/prompts/` and hands each chunk to a
    subagent, one chunk per subagent.
-5. Checks each chunk and chapter, audits terminology, then builds and verifies the
-   final EPUB.
+5. Checks each chunk and chapter, then builds and verifies the final EPUB. `build`
+   runs one combined preflight: terminology, manual review, trial merge, and XML/link
+   checks are reported together, and the book is packaged only when all are clean.
 6. Reports the output path, chunk profile, progress, check/audit/verify results, and
    any remaining issues.
 

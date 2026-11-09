@@ -166,9 +166,9 @@ work：/path/to/books/mybook-zh-project/work
    不足两章按实际章节数读；封面、版权页、目录页不算正文第一章。然后完善 `work/terms.tsv`，
    运行 `guide`；它会生成 `work/TRANSLATION_GUIDE.md`。
 3. 正文按分块翻译，流程见下面的“分块翻译”；每个分块写完后用 `check --chunk --fix` 自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译）。**每个分块通过后立即把本块新术语/专名登记进 `work/terms.tsv`**（见第五节），再翻下一块。
-4. 全部完成后先运行 `review`：清单为空才运行 `build` 和 `verify`；非空就停下，把
-   `work/needs_review.tsv` 和条数报给用户。XML、内部链接、锚点、占位符必须零错误。构建前运行一次
-   `terms-audit`；`build` 会硬性拦截术语不一致（登记过的译名或保留英文没被执行）。
+4. 全部完成后先运行 `review`（它重查登记项、能修的清掉），再运行 `build`。`build`
+   会先做一次统一体检：术语、人工介入、试合并、XML/链接/锚点，四类问题**一次全部列出**，
+   有问题就停下、不生成成品；把整份清单一次改完后重新 `build`。
 5. 不要修改源 EPUB；不要手工改 `work/build` 里的文件，所有修改通过 `work/zh/`、`work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 完成。
 
 ### 分块翻译（照做，不要自己发明流程）
@@ -428,10 +428,10 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 - 登记后 `next` 会跳过该块继续翻后面的块；不要反复重派它。
 - `check` 报 `exhausted` 的块，`next` 会返回 `action: do not dispatch a subagent`；
   只由主会话处理，处理不了再 `review --add`。
-- 全部翻完时 `next` 显示 `X/Y chunks (N in manual review)`；先跑 `review`：清单为空
-  才 `build`，非空就停，把文件和条数报给用户。
+- 全部翻完时 `next` 显示 `X/Y chunks (N in manual review)`；先跑 `review`，再跑
+  `build`。`build` 会把人工介入项和术语、合并、结构问题一起列出，不会只报一项。
 - 构建前先跑 `review`：它重查所有登记过的块，修好的清除、未完成的退回队列、仍修不动
-  的保留；清单为空才继续构建。`build` 也会拒绝在清单非空时合并。
+  的保留。`build` 也不会在清单非空时合并，但会把清单和其他问题一起报出来。
 - `status` 里的 `Nr` 表示该文件有 N 条人工介入项；这些块按未完成计，不再算 `done`。
 
 弱模型（4B 级激活、thinking 很长的模型）建议单独配一个翻译 subagent，降低推理深度。
@@ -502,9 +502,9 @@ skill 会优先派 `translate`，不存在时自动退回 `general`。示例（�
 - `terms.tsv` 第二列只写译名或英文本身，不要把“首次出现写……”这类说明写进去；
   同一术语的多个可接受译法也写在第二列，用 `、` 或 `；` 分隔（例如
   `AI agent<TAB>AI 智能体、智能体`）；说明放第三列，或写进 `work/decisions.md`。
-- `build` 会先跑术语审计：登记过的决定在实际出现的位置没有被遵守（该用译名却用了
-  别的说法，或登记保留英文却被译成中文），就直接拒绝构建并列出片段；修译文或改
-  术语表后重新 `build`。
+- `build` 会先做统一体检：术语不一致、人工介入项、试合并失败、XML/链接/锚点问题
+  一次全部列出，任一类有问题就拒绝生成成品；一次改完后重新 `build`。术语不一致包括
+  该用译名却用了别的说法，以及登记保留英文却被译成中文。
 - 单独运行 `terms-audit` 默认只报告出现 5 次以上的术语，供人工查看；无效的 keep 行
   总会列出；`--strict` 才返回非零。新补的术语会影响已翻章节，用
   `terms-audit --only <文件名>` 回扫，不要整本重翻。
