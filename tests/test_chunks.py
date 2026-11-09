@@ -535,6 +535,16 @@ class UntranslatedSpanTest(unittest.TestCase):
                     "Ministry of Foreign Affairs"):
             self.assertFalse(chunks._run_is_prose(run), run)
 
+    def test_short_runs_without_function_words_are_names(self):
+        for run in ("VIKING ship colophon", "machine learning model",
+                    "GPU memory bandwidth", "Penguin Random House LLC"):
+            self.assertFalse(chunks._run_is_prose(run), run)
+
+    def test_short_runs_with_function_words_are_prose(self):
+        for run in ("pattern of behavior", "feedback from the team",
+                    "science of how we change"):
+            self.assertTrue(chunks._run_is_prose(run), run)
+
     def test_long_title_cased_runs_are_treated_as_prose(self):
         self.assertFalse(chunks._run_is_prose(
             "The Team Needs Immediate Feedback Now"))
@@ -602,6 +612,15 @@ class CheckFileResidueTest(unittest.TestCase):
         cfg = self.make_cfg(
             "<p>Ken Huang and Chris Hughes</p>\n",
             "@@@SEG 001@@@\n@@@VERBATIM@@@\nKen Huang and Chris Hughes\n")
+        self.assertEqual(chunks.check_file(cfg, "c.xhtml", only_chunk=1), [])
+
+    def test_trademark_boilerplate_is_not_reported(self):
+        cfg = self.make_cfg(
+            "<p>VIKING and VIKING ship colophon are registered trademarks of "
+            "Penguin Random House LLC.</p>\n",
+            "@@@SEG 001@@@\n"
+            "VIKING 和 VIKING ship colophon（船尾诗）是 Penguin Random House "
+            "LLC 的注册商标。\n")
         self.assertEqual(chunks.check_file(cfg, "c.xhtml", only_chunk=1), [])
 
     def test_residue_chunk_is_not_counted_as_progress(self):

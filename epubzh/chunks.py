@@ -39,6 +39,11 @@ TITLE_STOP_WORDS = {
 # organisation names rarely exceed this many words.
 TITLE_MAX_WORDS = 6
 
+# A short run with no function word is a name, brand, or technical term.
+# Real sentence fragments almost always carry a function word, even when
+# they are this short ("pattern of behavior").
+NAME_MAX_WORDS = 3
+
 # Upper bound for the span-placement search. Real segments have a handful of
 # ambiguous occurrences; this only stops a pathological file from hanging.
 MAX_ALIGNED_NODES = 200000
@@ -1133,6 +1138,12 @@ def _run_is_prose(run):
     if all(word[:1].isupper() or word.lower() in TITLE_STOP_WORDS
            for word in words):
         return len(words) > TITLE_MAX_WORDS
+    # A short run with no function word is a name, brand, or technical term
+    # ("VIKING ship colophon", "machine learning model"). Sentence fragments
+    # this short almost always carry a function word ("pattern of behavior").
+    if len(words) <= NAME_MAX_WORDS \
+            and not any(word.lower() in TITLE_STOP_WORDS for word in words):
+        return False
     # Two lowercase words are enough: "rationalize aggression" is prose,
     # whereas "League of Legends" carries only one.
     return sum(1 for word in words if word[:1].islower()) >= 2
