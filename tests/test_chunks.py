@@ -476,5 +476,138 @@ class CheckFileSpacingTest(unittest.TestCase):
                       (zh_dir / "c.01.txt").read_text(encoding="utf-8"))
 
 
+class VerbatimProseTest(unittest.TestCase):
+    def test_prose_is_flagged(self):
+        self.assertTrue(chunks._verbatim_is_prose(
+            "In toxic cultures, stars get rewarded for results even if they "
+            "wreck relationships."))
+        self.assertTrue(chunks._verbatim_is_prose(
+            "Our leaders require you to worship them at the office altar "
+            "every day"))
+
+    def test_code_urls_logs_and_addresses_are_not_flagged(self):
+        for text in ("pip install epubzh --upgrade",
+                     "https://example.com/a/b?c=d",
+                     "DistributedApps.ai, Herndon, VA, USA",
+                     "ERROR failed to connect to the server\n"
+                     "WARN retrying in five seconds",
+                     "def run(config):\n    return config"):
+            self.assertFalse(chunks._verbatim_is_prose(text), text)
+
+
+class UntranslatedSpanTest(unittest.TestCase):
+    def test_mixed_translation_with_a_copied_phrase_is_flagged(self):
+        source = "They saw the consistent pattern of bad behavior and changed."
+        text = "他们看到了 consistent pattern of bad behavior，于是决定改变。"
+        self.assertEqual(chunks._untranslated_spans(source, text),
+                         ["consistent pattern of bad behavior"])
+
+    def test_several_phrases_are_reported_together(self):
+        source = ("They saw the consistent pattern of bad behavior and "
+                  "needed immediate feedback from the team.")
+        text = ("他们看到了 consistent pattern of bad behavior，也需要 "
+                "immediate feedback from the team。")
+        found = chunks._untranslated_spans(source, text)
+        self.assertIn("consistent pattern of bad behavior", found)
+        self.assertTrue(any("immediate feedback" in run for run in found))
+
+    def test_single_words_short_phrases_and_names_are_allowed(self):
+        cases = [
+            ("Accountability matters.", "accountability 很重要。"),
+            ("They left reform cards behind.", "他们留下了 reform cards。"),
+            ("Ministry of Foreign Affairs replied.",
+             "Ministry of Foreign Affairs 回复了。"),
+            ("She read The Catcher in the Rye twice.",
+             "她把 The Catcher in the Rye 读了两遍。"),
+        ]
+        for source, text in cases:
+            self.assertEqual(chunks._untranslated_spans(source, text), [], text)
+
+    def test_email_and_url_are_allowed(self):
+        source = ("Write to someone@example.com or visit "
+                  "https://example.com/docs for details.")
+        text = ("写信到 someone@example.com 或访问 https://example.com/docs "
+                "了解详情。")
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
+    def test_parenthetical_glossary_notes_are_allowed(self):
+        source = "They named the consistent pattern of bad behavior."
+        text = "他们把这种现象称为持续的不良行为模式（consistent pattern of bad behavior）。"
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
+    def test_a_finished_translation_is_clean(self):
+        self.assertEqual(
+            chunks._untranslated_spans("They changed their minds", "他们改变了主意"),
+            [])
+
+
+class CheckFileResidueTest(unittest.TestCase):
+    def make_cfg(self, source_html, translation):
+        root = Path(tempfile.mkdtemp())
+        src_dir = root / "src"
+        text_dir = Path("OEBPS")
+        (src_dir / text_dir).mkdir(parents=True)
+        source = src_dir / text_dir / "c.xhtml"
+        source.write_text(source_html, encoding="utf-8")
+        index = {"c.xhtml": {"chunks": 1,
+                             "sha256": hashlib.sha256(
+                                 source.read_bytes()).hexdigest()}}
+        (root / "index.json").write_text(json.dumps(index), encoding="utf-8")
+        zh_dir = root / "zh"
+        zh_dir.mkdir()
+        (zh_dir / "c.01.txt").write_text(translation, encoding="utf-8")
+        return SimpleNamespace(
+            index_file=root / "index.json", source_dir=src_dir,
+            text_dir=text_dir, protect_blocks=[], require_latin=True,
+            words_per_chunk=1200, max_segments_per_chunk=40, zh_dir=zh_dir,
+            work_dir=root / "work", mode=None, spacing=True)
+
+    def test_leftover_english_is_reported_as_untranslated(self):
+        cfg = self.make_cfg(
+            "<p>They saw the consistent pattern of bad behavior and "
+            "changed.</p>\n",
+            "@@@SEG 001@@@\n"
+            "他们看到了 consistent pattern of bad behavior，于是决定改变。\n")
+        problems = chunks.check_file(cfg, "c.xhtml", only_chunk=1)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("untranslated source text", problems[0])
+        issues = chunks.chunk_issues(cfg, "c.xhtml", 1)
+        self.assertEqual(issues[0]["kind"], "not-translated")
+
+    def test_verbatim_on_prose_is_reported(self):
+        cfg = self.make_cfg(
+            "<p>In toxic cultures, stars get rewarded for results even if "
+            "they wreck relationships.</p>\n",
+            "@@@SEG 001@@@\n@@@VERBATIM@@@\n"
+            "In toxic cultures, stars get rewarded for results even if they "
+            "wreck relationships.\n")
+        problems = chunks.check_file(cfg, "c.xhtml", only_chunk=1)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("@@@VERBATIM@@@ on a prose segment", problems[0])
+        issues = chunks.chunk_issues(cfg, "c.xhtml", 1)
+        self.assertEqual(issues[0]["kind"], "other")
+
+    def test_verbatim_on_a_short_name_is_fine(self):
+        cfg = self.make_cfg(
+            "<p>Ken Huang and Chris Hughes</p>\n",
+            "@@@SEG 001@@@\n@@@VERBATIM@@@\nKen Huang and Chris Hughes\n")
+        self.assertEqual(chunks.check_file(cfg, "c.xhtml", only_chunk=1), [])
+
+    def test_residue_chunk_is_not_counted_as_progress(self):
+        cfg = self.make_cfg(
+            "<p>They saw the consistent pattern of bad behavior and "
+            "changed.</p>\n",
+            "@@@SEG 001@@@\n"
+            "他们看到了 consistent pattern of bad behavior，于是决定改变。\n")
+        self.assertEqual(chunks.progress(cfg), (0, 1))
+
+    def test_a_finished_chunk_still_counts(self):
+        cfg = self.make_cfg(
+            "<p>They saw the consistent pattern of bad behavior and "
+            "changed.</p>\n",
+            "@@@SEG 001@@@\n他们看到了这种持续的不良行为模式，于是决定改变。\n")
+        self.assertEqual(chunks.progress(cfg), (1, 1))
+
+
 if __name__ == "__main__":
     unittest.main()

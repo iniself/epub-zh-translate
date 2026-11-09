@@ -356,6 +356,14 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
   通读整块。报 `segment markers` 时会点名重复/缺失段号和重复段所在行号；缺中间段
   会给 `insert between @@@SEG 00x@@@ and @@@SEG 00y@@@`，必须插入指定位置，
   **不要追加到文件末尾**。
+- 混排英文会被单独点名：
+  - `untranslated source text still in the translation: "..."`：译文里保留了整段
+    源文短语（≥20 字符、两个以上小写词）。只改这几个词；人名、术语、邮箱、URL
+    可以保留，不要为此加 `@@@VERBATIM@@@`。
+  - `@@@VERBATIM@@@ on a prose segment`：普通句子不能靠插标记跳过翻译；只有代码、
+    命令、日志、URL 才能整段保留。
+  - 这两类分别是 `not-translated` 和 `other`，**不能登记人工介入**；修不动也要继续翻，
+    卡住就如实报告，不许丢进人工清单。
 - 子代理执行契约要求**优先一次 `write` 写完**整个分块，只有写被截断才追加。追加
   时 oldString 只取最后一段，newString 不得重复最后一段——重复段几乎都来自这个
   边界写错。`edit` 返回 identical/找不到/多处匹配时不得重试，直接 `write` 重写整块。
@@ -412,6 +420,8 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
   `requeued ...`），由 `next` 重新派发补译，不会留在清单里占位。
 - 被登记的块**不计入 `translated` 进度**：`status` 里按未完成算，`next` 的进度也会
   把它排除。登记不是进度。
+- 没通过 `check` 的块同样不计入进度：结构完整但留下未翻译英文时，`status` 和
+  `next` 的 `X/Y` 都不算它，`next` 会把它当作 `repair` 继续返回。
 - 登记后 `next` 会跳过该块继续翻后面的块；不要反复重派它。
 - `check` 报 `exhausted` 的块，`next` 会返回 `action: do not dispatch a subagent`；
   只由主会话处理，处理不了再 `review --add`。

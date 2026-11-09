@@ -390,7 +390,10 @@ TEXT 中对应原文 ⟦1⟧...⟦/1⟧ 内容的那段文字
 4. 区间的顺序和嵌套必须与原文一致：SPAN 的顺序就是原文开标记的顺序，外层区间包含内层区间。
 5. TEXT 里只保留单标记 `⟦k⟧`；不要把成对标记写进 TEXT，也不要输出原文没有的 SPAN。
 6. 整段是代码、命令、日志、URL：原文照抄，并在段内单独一行写 `@@@VERBATIM@@@`。
+   普通句子一律翻译；`@@@VERBATIM@@@` 不能用来跳过散文，否则自检会报
+   `@@@VERBATIM@@@ on a prose segment`。
 7. TEXT 和每个 SPAN 尽量各写一行；需要换行时只在句末换行，不要拆开词语。
+8. 译文用中文写完，不要留下成句英文；人名、品牌、术语、代码可以保留。
 """
 
 
@@ -459,8 +462,9 @@ def _aligned_contract(cfg, stem, chunk, dst, state, last, nseg):
    - `TEXT must not contain the paired marker`：把该成对标记从 TEXT 删掉，
      对应文字放进 `@@@SPAN k@@@`。
    - `source nesting cannot be reproduced`：保持原文区间的顺序和嵌套，不要移动区间。
-   - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
-     保留，并在段内单独加一行 `@@@VERBATIM@@@`。
+   - 报 `not translated` / `untranslated source text` 时，把残留英文译成中文；
+     人名、术语、代码可以保留；只有整段确实是代码/日志/URL 才加
+     `@@@VERBATIM@@@`。
 5. 每轮 = 改 TEXT/SPAN + 自检；用自检末尾的 `N problem(s)` 判断进展，最多 6 轮。
    数字变小就继续，没变小就停（aligned 模式没有 `--placeholders` 兜底）。
    停止时回复一行 `失败：<原因>`，不要问用户。
@@ -569,8 +573,9 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
    - 占位符按原文照抄；`extra` 里的标记删掉，成对的多余标记整对删除。
    - 报 `placeholder nesting mismatch` 时，说明某个成对区间吞进了或挤出了相邻标记：
      把闭标记移回该区间译文之后，保持原文的嵌套关系。
-   - 报 `not translated` 时先判断这段是否真的需要翻译；人名、地址、代码、URL 原样
-     保留，并在段内单独加一行 `@@@VERBATIM@@@`。
+   - 报 `not translated` / `untranslated source text` 时，把残留英文译成中文；
+     人名、术语、代码可以保留；只有整段确实是代码/日志/URL 才加
+     `@@@VERBATIM@@@`。
 5. 每轮 = 改点名段 + 自检；用自检末尾的 `N problem(s)` 判断进展，最多 6 轮：
    - 数字变小 → 继续下一轮；
    - 没变小 → 只剩占位符错误且没用过兜底时，跑一次
@@ -654,11 +659,15 @@ def _build_prompt(cfg, name, chunk, index, full=False):
             if aligned:
                 parts.append("只改上面点名的段：SPAN 必须是 TEXT 里的逐字子串，"
                              "缺失的 SPAN 按原文顺序补上；不要把成对标记写进 TEXT。"
+                             "`untranslated source text` 点名的英文词组要译成中文；"
+                             "`@@@VERBATIM@@@ on a prose segment` 要删掉标记并翻译。"
                              "`--fix` 只处理段号、重复段和排序，重复运行不会消除这些错误。")
             else:
                 parts.append("只改上面点名的段：按原文把缺失的 `⟦n⟧` / `⟦/n⟧` 插回"
-                             "对应译文的位置，多余的标记删掉。`--fix` 只处理段号、"
-                             "重复段和多余闭标记，重复运行不会消除这些错误。")
+                             "对应译文的位置，多余的标记删掉。"
+                             "`untranslated source text` 点名的英文词组要译成中文；"
+                             "`@@@VERBATIM@@@ on a prose segment` 要删掉标记并翻译。"
+                             "`--fix` 只处理段号、重复段和多余闭标记，重复运行不会消除这些错误。")
             parts.append("")
 
     if aligned:

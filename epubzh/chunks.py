@@ -13,6 +13,23 @@ VERBATIM_RE = re.compile(r"^@@@\s*VERBATIM\s*@@@$")
 ALIGNED_MARK_RE = re.compile(r"@@@\s*(TEXT|SPAN\s+0*(\d+))\s*@@@")
 ALIGNED_TAG_RE = re.compile(r"@@@\s*TEXT\s*@@@")
 CJK_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'\u2019\-]*")
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+CODE_RE = re.compile(
+    r"(?:[{}<>]|=>|#!/|^\s*[\$>#]\s|^\s*[\$>#]$|"
+    r"\b(?:sudo|pip|npm|apt-get)\b)", re.MULTILINE)
+
+# A copied source run shorter than this is a name or a common loanword; only
+# whole phrases are reported as untranslated text.
+MIN_RESIDUE_CHARS = 20
+
+# Lowercase function words allowed inside a title-cased name, so
+# "The Catcher in the Rye" stays a name rather than untranslated prose.
+TITLE_STOP_WORDS = {
+    "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "by",
+    "with", "from", "de", "la", "van", "von",
+}
 
 # Upper bound for the span-placement search. Real segments have a handful of
 # ambiguous occurrences; this only stops a pathological file from hanging.
@@ -928,6 +945,31 @@ def chunk_state(path, nseg):
     return "broken", len(nums)
 
 
+def content_ok(cfg, name, indices):
+    """Return ``{chunk: True/False}`` from a read-only content check.
+
+    Structural completeness (all segment numbers present) is not enough: a
+    chunk can keep source phrases untranslated. Progress and status use this
+    so such a chunk is not reported as done while `next` still returns it for
+    repair.
+    """
+    try:
+        groups, _, err = _load_source(cfg, name)
+    except OSError:
+        return {ci: False for ci in indices}
+    if err:
+        return {ci: False for ci in indices}
+    result = {}
+    for ci in indices:
+        if not 1 <= ci <= len(groups):
+            result[ci] = False
+            continue
+        found, _ = _check_chunk(cfg, name, ci, groups[ci - 1], fix=False,
+                                verbose=False)
+        result[ci] = not found
+    return result
+
+
 def progress(cfg):
     """Return (done, total) chunk counts, excluding manual-review chunks."""
     from . import review
@@ -939,11 +981,14 @@ def progress(cfg):
         info = index[name]
         counts = chunk_counts(cfg, name, info)
         stem = Path(name).stem
+        candidates = []
         for ci, nseg in enumerate(counts, 1):
             total += 1
             state, _ = chunk_state(cfg.zh_dir / chunk_name(stem, ci), nseg)
             if state == "done" and (name, ci) not in registered:
-                done += 1
+                candidates.append(ci)
+        checks = content_ok(cfg, name, candidates) if candidates else {}
+        done += sum(1 for ci in candidates if checks.get(ci))
     return done, total
 
 
@@ -963,14 +1008,17 @@ def status(cfg):
         counts = chunk_counts(cfg, name, info)
         stem = Path(name).stem
         done = partial = broken = 0
+        candidates = []
         for ci, nseg in enumerate(counts, 1):
             state, _ = chunk_state(cfg.zh_dir / chunk_name(stem, ci), nseg)
             if state == "done" and (name, ci) not in registered:
-                done += 1
+                candidates.append(ci)
             elif state == "partial":
                 partial += 1
             elif state == "broken":
                 broken += 1
+        checks = content_ok(cfg, name, candidates) if candidates else {}
+        done = sum(1 for ci in candidates if checks.get(ci))
         rows.append((name, done, len(counts), info["segments"], info["words"],
                      partial, broken, review_counts.get(name, 0)))
     total_done = sum(r[1] for r in rows)
@@ -1034,6 +1082,124 @@ def _looks_translatable(body):
         # noun rather than an untranslated sentence.
         return len(words) > 4 and "," not in body
     return True
+
+
+def _latin_tokens(text):
+    return [(m.group(0), m.start(), m.end())
+            for m in LATIN_WORD_RE.finditer(text)]
+
+
+def _longest_common_run(source_words, target_words, used=()):
+    """Return ``(length, source_end, target_end)`` of the longest word run.
+
+    ``used`` marks target word positions already reported, so the caller can
+    find several distinct residue phrases in one segment.
+    """
+    best = (0, 0, 0)
+    previous = [0] * (len(target_words) + 1)
+    for i in range(1, len(source_words) + 1):
+        current = [0] * (len(target_words) + 1)
+        word = source_words[i - 1]
+        for j in range(1, len(target_words) + 1):
+            if j - 1 in used or word != target_words[j - 1]:
+                continue
+            current[j] = previous[j - 1] + 1
+            if current[j] > best[0]:
+                best = (current[j], i, j)
+        previous = current
+    return best
+
+
+def _run_is_prose(run):
+    """True when a copied run looks like sentence text, not a name or code."""
+    if EMAIL_RE.search(run) or URL_RE.search(run):
+        return False
+    words = LATIN_WORD_RE.findall(run)
+    if len(words) < 2:
+        return False
+    if any(re.search(r"\d", word) for word in words):
+        return False
+    if all(word[:1].isupper() for word in words):
+        return False
+    # Title Case with lowercase function words is still a proper name:
+    # "The Catcher in the Rye", "Ministry of Foreign Affairs".
+    if all(word[:1].isupper() or word.lower() in TITLE_STOP_WORDS
+           for word in words):
+        return False
+    # Two lowercase words are enough: "rationalize aggression" is prose,
+    # whereas "League of Legends" carries only one.
+    return sum(1 for word in words if word[:1].islower()) >= 2
+
+
+def _is_parenthetical(text, start, end):
+    """True when the run sits inside （...）, the glossary annotation form."""
+    before = text[:start].rstrip()
+    after = text[end:].lstrip()
+    return (before.endswith(("（", "("))
+            and after.startswith(("）", ")")))
+
+
+def _untranslated_spans(source, translated, limit=3):
+    """Return copied source phrases still sitting in the translation.
+
+    Mixed Chinese/English is normal; what is not normal is a whole source
+    phrase surviving verbatim. Matching whole word runs keeps names, single
+    loanwords, emails, URLs, and labels out of the report. Up to ``limit``
+    distinct phrases are returned so one check names everything that matters
+    instead of forcing one repair round per phrase.
+    """
+    source_body = markup.strip_placeholders(source)
+    target_body = markup.strip_placeholders(translated)
+    source_words = [word.lower()
+                    for word, _, _ in _latin_tokens(source_body)]
+    tokens = _latin_tokens(target_body)
+    if len(source_words) < 2 or not tokens:
+        return []
+    target_words = [word.lower() for word, _, _ in tokens]
+    if not set(source_words) & set(target_words):
+        return []
+    found, used = [], set()
+    for _ in range(limit):
+        length, _, end = _longest_common_run(source_words, target_words, used)
+        if length < 2:
+            break
+        span = set(range(end - length, end))
+        used.update(span)
+        start = tokens[end - length][1]
+        stop = tokens[end - 1][2]
+        run = target_body[start:stop]
+        if len(run) >= MIN_RESIDUE_CHARS and _run_is_prose(run) \
+                and run not in found and not _is_parenthetical(
+                    target_body, start, stop):
+            found.append(run)
+    return found
+
+
+def _verbatim_is_prose(source):
+    """True when ``@@@VERBATIM@@@`` was put on ordinary sentences.
+
+    Verbatim is legitimate for code, commands, logs, URLs, and addresses. It
+    is not a way to skip a paragraph of prose.
+    """
+    body = " ".join(markup.strip_placeholders(source).split())
+    if not body:
+        return False
+    if EMAIL_RE.search(body) or URL_RE.search(body) or CODE_RE.search(body):
+        return False
+    words = LATIN_WORD_RE.findall(body)
+    if len(words) < 8:
+        return False
+    if sum(1 for word in words if word[:1].islower()) < 3:
+        return False
+    # Logs and tables start with shouting tokens such as ERROR or WARN.
+    if sum(1 for word in words if word.isupper() and len(word) >= 3) >= 2:
+        return False
+    # A comma-separated address mixes capitals; ordinary prose does not.
+    if body.count(",") >= 2 \
+            and sum(1 for word in words if word[:1].isupper()) > len(words) / 2:
+        return False
+    return True
+
 
 
 def _load_source(cfg, name):
@@ -1139,6 +1305,16 @@ def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
                            "detail": bad})
             continue
         if keep:
+            if _verbatim_is_prose(seg.text):
+                detail = ("@@@VERBATIM@@@ on a prose segment: translate it; "
+                          "only code, commands, logs, and URLs may stay in "
+                          "the source language")
+                problems.append("%s chunk %d seg %d/%d: %s%s"
+                                % (name, ci, pos, width, detail,
+                                   _context(seg, text)))
+                issues.append({"seg": pos, "kind": "other",
+                               "source": seg.text, "translation": text,
+                               "detail": detail})
             continue
         body = markup.strip_placeholders(text).strip()
         short = len(body) <= 3 and " " not in body
@@ -1154,6 +1330,19 @@ def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
             issues.append({"seg": pos, "kind": "not-translated",
                            "source": seg.text, "translation": text,
                            "detail": detail})
+            continue
+        if cfg.require_latin:
+            runs = _untranslated_spans(seg.text, text)
+            if runs:
+                detail = ('untranslated source text still in the translation: '
+                          '%s; translate it (names, terms, and code may stay '
+                          'as-is)' % ", ".join('"%s"' % run for run in runs))
+                problems.append("%s chunk %d seg %d/%d: %s%s"
+                                % (name, ci, pos, width, detail,
+                                   _context(seg, text)))
+                issues.append({"seg": pos, "kind": "not-translated",
+                               "source": seg.text, "translation": text,
+                               "detail": detail})
     return problems, issues
 
 
