@@ -530,6 +530,17 @@ class UntranslatedSpanTest(unittest.TestCase):
                 "了解详情。")
         self.assertEqual(chunks._untranslated_spans(source, text), [])
 
+    def test_name_particles_and_short_titles_are_allowed(self):
+        for run in ("van der Waals", "bin Laden", "The Catcher in the Rye",
+                    "Ministry of Foreign Affairs"):
+            self.assertFalse(chunks._run_is_prose(run), run)
+
+    def test_long_title_cased_runs_are_treated_as_prose(self):
+        self.assertFalse(chunks._run_is_prose(
+            "The Team Needs Immediate Feedback Now"))
+        self.assertTrue(chunks._run_is_prose(
+            "The Team Needs Immediate Feedback From Now"))
+
     def test_parenthetical_glossary_notes_are_allowed(self):
         source = "They named the consistent pattern of bad behavior."
         text = "他们把这种现象称为持续的不良行为模式（consistent pattern of bad behavior）。"

@@ -24,12 +24,20 @@ CODE_RE = re.compile(
 # whole phrases are reported as untranslated text.
 MIN_RESIDUE_CHARS = 20
 
-# Lowercase function words allowed inside a title-cased name, so
-# "The Catcher in the Rye" stays a name rather than untranslated prose.
+# Lowercase function words and name particles allowed inside a title-cased
+# name, so "The Catcher in the Rye" and "van der Waals" stay names rather
+# than untranslated prose.
 TITLE_STOP_WORDS = {
-    "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "by",
-    "with", "from", "de", "la", "van", "von",
+    "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or",
+    "nor", "but", "by", "with", "from", "as", "per", "via",
+    "de", "del", "della", "der", "den", "des", "di", "da", "du", "dos",
+    "das", "la", "le", "lo", "van", "von", "bin", "ibn", "bint", "al", "el",
+    "ter", "ten", "zu", "zum", "zur", "af", "av",
 }
+
+# Longer title-cased runs are leftover prose, not names: real titles and
+# organisation names rarely exceed this many words.
+TITLE_MAX_WORDS = 6
 
 # Upper bound for the span-placement search. Real segments have a handful of
 # ambiguous occurrences; this only stops a pathological file from hanging.
@@ -1119,13 +1127,12 @@ def _run_is_prose(run):
         return False
     if any(re.search(r"\d", word) for word in words):
         return False
-    if all(word[:1].isupper() for word in words):
-        return False
     # Title Case with lowercase function words is still a proper name:
-    # "The Catcher in the Rye", "Ministry of Foreign Affairs".
+    # "The Catcher in the Rye", "Ministry of Foreign Affairs". A long
+    # title-cased run is more likely an untranslated sentence.
     if all(word[:1].isupper() or word.lower() in TITLE_STOP_WORDS
            for word in words):
-        return False
+        return len(words) > TITLE_MAX_WORDS
     # Two lowercase words are enough: "rationalize aggression" is prose,
     # whereas "League of Legends" carries only one.
     return sum(1 for word in words if word[:1].islower()) >= 2
