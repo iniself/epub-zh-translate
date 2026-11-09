@@ -13,6 +13,9 @@ The skill drives a local, dependency-free pipeline (`epubzh`) that:
   copied into the translation and `@@@VERBATIM@@@` used on prose (CJK/Latin spacing is
   auto-fixed by `--fix`);
 - records unsolvable chunks for manual review, keeps translating, and gates the merge;
+- audits terminology across the book, carries decided renderings into later chunks, and
+  supports both "translate to this Chinese term" and "keep this English term" rows;
+  `build` refuses to merge while a registered decision is violated;
 - rebuilds the EPUB from the original source and verifies XML, links, and anchors.
 
 ## Requirements
@@ -331,8 +334,11 @@ Not suitable for fixed-layout books, comics, or scanned/image-based books.
   prompt to the same model a third time. New projects on weak models can start
   with `small`, `mini`, or `tiny`; the smaller the profile, the less each chunk
   asks the model to write.
-- **Terminology drifts**: run `terms-audit`; put acceptable variants in the third
-  column of `terms.tsv`. Keep the second column to a single canonical rendering.
+- **Terminology drifts**: run `terms-audit`; list acceptable renderings in the second
+  column of `terms.tsv`, separated by `、` or `；`. `build` enforces the glossary: fix
+  the translation or the glossary instead of bypassing the gate. A row whose Chinese
+  column repeats the English term (or whose note says `keep`) means "leave this term
+  in English".
 - **Changing the chunk profile mid-project**: not supported. All four profiles
   must be chosen before `extract`; switching renumbers chunks and invalidates
   existing translations.

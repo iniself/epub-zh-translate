@@ -49,30 +49,44 @@ def load_pairs(cfg, only=None):
                 yield name, ci, num, a, b
 
 
-def audit(cfg, only=None, strict=False, limit=20, terms=None):
+def audit(cfg, only=None, strict=False, limit=20, terms=None,
+          min_occurrences=5, quiet=False):
     """Compare the glossary against translated segments.
 
     Returns (rows, total_hits, total_checked). ``rows`` is
     [(misses, hits, english, variants, samples)] sorted by misses.
+
+    A keep row (English column repeated, or note ``keep``) expects the English
+    term to survive in the translation; a translate row expects one of its
+    Chinese variants. ``min_occurrences`` drops rare terms to keep the report
+    readable; the build gate uses 1 so any registered decision is enforced.
     """
     if terms is None:
         from . import guide
         terms = guide.read_terms(cfg)
+    from .guide import keep_term_is_valid, term_is_keep
     pairs = list(load_pairs(cfg, only=only))
     checked = []
-    for en, zh, _note in terms:
-        variants = split_variants(zh)
-        if not variants:
-            continue
-        keep = all(v.lower() == en.lower() for v in variants)
+    for en, zh, note in terms:
+        keep = term_is_keep(en, zh, note)
+        invalid_keep = keep and not keep_term_is_valid(en)
+        if keep:
+            variants = [en]
+        else:
+            variants = split_variants(zh)
+            if not variants:
+                continue
         pattern = term_pattern(en)
         hits, misses, samples = 0, 0, []
         for name, ci, num, src, dst in pairs:
             plain = markup.strip_placeholders(src)
             if not pattern.search(plain):
                 continue
-            if keep:
-                ok = en.lower() in dst.lower()
+            if invalid_keep:
+                # A whole sentence cannot be exempted from translation.
+                ok = False
+            elif keep:
+                ok = bool(pattern.search(markup.strip_placeholders(dst)))
             else:
                 ok = any(v in dst for v in variants)
             if ok:
@@ -80,36 +94,50 @@ def audit(cfg, only=None, strict=False, limit=20, terms=None):
             else:
                 misses += 1
                 if len(samples) < 3:
-                    samples.append("%s chunk %d seg %d: %s" %
-                                   (Path(name).stem, ci, num, dst[:80]))
-        if hits + misses >= 5:
+                    if invalid_keep:
+                        expected = "译成中文（keep 行不能是整句）"
+                    elif keep:
+                        expected = "保留英文"
+                    else:
+                        expected = "、".join(variants)
+                    samples.append("%s chunk %d seg %d: 期望 %s — %s"
+                                   % (Path(name).stem, ci, num, expected,
+                                      dst[:80]))
+        if hits + misses >= min_occurrences or invalid_keep:
             checked.append((misses, hits, en, variants, samples))
     checked.sort(key=lambda r: (-r[0], r[2].lower()))
 
     total_hits = sum(r[1] for r in checked)
     total_miss = sum(r[0] for r in checked)
     total = total_hits + total_miss
-    print("terminology audit: %d term(s), %d segment(s)"
-          % (len(checked), total))
-    print("  matched %d, missed %d (%.1f%% hit)"
-          % (total_hits, total_miss,
-             100.0 * total_hits / total if total else 100.0))
-    print("")
-    print("%-26s %-18s %6s %6s %6s" % ("english", "expected chinese",
-                                       "seen", "hit", "miss"))
-    for misses, hits, en, variants, _ in checked[:limit]:
-        print("%-26s %-18s %6d %6d %6d"
-              % (en[:26], "、".join(variants)[:18], hits + misses, hits, misses))
-    if checked and checked[0][0]:
-        print("\nsamples:")
-        for misses, hits, en, variants, samples in checked[:limit]:
-            for s in samples:
-                print("  !! [%s] 期望「%s」 — %s"
-                      % (en, "、".join(variants), s))
-    if total_miss:
-        print("\nhint: 术语表是约定，不是硬校验。合理变体请补进 %s，"
-              "确认漏译再改 work/zh/。" % cfg.terms_tsv)
+    if not quiet:
+        print("terminology audit: %d term(s), %d segment(s)"
+              % (len(checked), total))
+        print("  matched %d, missed %d (%.1f%% hit)"
+              % (total_hits, total_miss,
+                 100.0 * total_hits / total if total else 100.0))
+        print("")
+        print("%-26s %-18s %6s %6s %6s" % ("english", "expected",
+                                           "seen", "hit", "miss"))
+        for misses, hits, en, variants, _ in checked[:limit]:
+            label = variants[0] if variants else ""
+            print("%-26s %-18s %6d %6d %6d"
+                  % (en[:26], label[:18], hits + misses, hits, misses))
+        if checked and checked[0][0]:
+            print("\nsamples:")
+            for misses, hits, en, variants, samples in checked[:limit]:
+                for s in samples:
+                    print("  !! [%s] %s" % (en, s))
+        if total_miss:
+            print("\nhint: 术语表是约定，也是 `build` 的硬门槛；可接受译法写进第二列"
+                  "（用 `、` 或 `；` 分隔），确认漏译再改 work/zh/。")
     return checked, total_hits, total
+
+
+def violations(cfg, only=None):
+    """Terms whose registered rendering is missing where the source has them."""
+    rows, _, _ = audit(cfg, only=only, quiet=True, min_occurrences=1)
+    return [row for row in rows if row[0]]
 
 
 def refresh_introduced(cfg):

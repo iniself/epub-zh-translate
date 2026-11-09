@@ -128,7 +128,7 @@ def cmd_init(args):
     print("next:")
     for line in _hint_lines(tool, cfg_path):
         print("  %s" % line)
-    print("  edit %s" % cfg.terms_tsv)
+    print("  fill %s as the book is translated" % cfg.terms_tsv)
 
 
 def cmd_unpack(args):
@@ -449,6 +449,22 @@ def cmd_merge(args):
 
 def cmd_build(args):
     cfg = config.load(args.config)
+    bad = terms_audit.violations(cfg, only=args.only)
+    if bad:
+        print("build stopped: %d terminology mismatch(es)" % len(bad))
+        for misses, hits, en, variants, samples in bad[:10]:
+            expected = "保留英文" if variants == [en] else "、".join(variants)
+            if variants == [en] and not guide.keep_term_is_valid(en):
+                expected = "译成中文（keep 行不能是整句）"
+            print("  !! [%s] 期望 %s（%d/%d 段符合）"
+                  % (en, expected, hits, hits + misses))
+            for sample in samples:
+                print("     %s" % sample)
+        if len(bad) > 10:
+            print("  ... 另有 %d 个术语" % (len(bad) - 10))
+        print("fix work/zh/ to follow the glossary, or correct %s; "
+              "then rerun `terms-audit`" % cfg.terms_tsv)
+        return 1
     ok = assemble.build(cfg, only=args.only, do_package=not args.no_package)
     return 0 if ok else 1
 

@@ -563,7 +563,7 @@ class UntranslatedSpanTest(unittest.TestCase):
 
 
 class CheckFileResidueTest(unittest.TestCase):
-    def make_cfg(self, source_html, translation):
+    def make_cfg(self, source_html, translation, terms=None):
         root = Path(tempfile.mkdtemp())
         src_dir = root / "src"
         text_dir = Path("OEBPS")
@@ -577,11 +577,14 @@ class CheckFileResidueTest(unittest.TestCase):
         zh_dir = root / "zh"
         zh_dir.mkdir()
         (zh_dir / "c.01.txt").write_text(translation, encoding="utf-8")
+        terms_tsv = root / "terms.tsv"
+        terms_tsv.write_text(terms or "English\t中文\n", encoding="utf-8")
         return SimpleNamespace(
             index_file=root / "index.json", source_dir=src_dir,
             text_dir=text_dir, protect_blocks=[], require_latin=True,
             words_per_chunk=1200, max_segments_per_chunk=40, zh_dir=zh_dir,
-            work_dir=root / "work", mode=None, spacing=True)
+            work_dir=root / "work", terms_tsv=terms_tsv, mode=None,
+            spacing=True)
 
     def test_leftover_english_is_reported_as_untranslated(self):
         cfg = self.make_cfg(
@@ -621,6 +624,42 @@ class CheckFileResidueTest(unittest.TestCase):
             "@@@SEG 001@@@\n"
             "VIKING 和 VIKING ship colophon（船尾诗）是 Penguin Random House "
             "LLC 的注册商标。\n")
+        self.assertEqual(chunks.check_file(cfg, "c.xhtml", only_chunk=1), [])
+
+    def test_registered_keep_term_is_not_reported(self):
+        cfg = self.make_cfg(
+            "<p>They saw the consistent pattern of bad behavior and "
+            "changed.</p>\n",
+            "@@@SEG 001@@@\n"
+            "他们看到了 consistent pattern of bad behavior，于是决定改变。\n",
+            terms=("English\t中文\n"
+                   "consistent pattern of bad behavior\t"
+                   "consistent pattern of bad behavior\tkeep\n"))
+        self.assertEqual(chunks.check_file(cfg, "c.xhtml", only_chunk=1), [])
+
+    def test_keep_term_does_not_hide_the_rest_of_the_segment(self):
+        cfg = self.make_cfg(
+            "<p>They saw the consistent pattern of bad behavior and needed "
+            "immediate feedback from the team.</p>\n",
+            "@@@SEG 001@@@\n"
+            "他们看到了 consistent pattern of bad behavior，也需要 immediate "
+            "feedback from the team。\n",
+            terms=("English\t中文\n"
+                   "consistent pattern of bad behavior\t"
+                   "consistent pattern of bad behavior\tkeep\n"))
+        problems = chunks.check_file(cfg, "c.xhtml", only_chunk=1)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("immediate feedback from the team", problems[0])
+        detail = problems[0].split("\n    src:")[0]
+        self.assertNotIn("consistent pattern of bad behavior", detail)
+
+    def test_registered_keep_long_title_can_be_verbatim(self):
+        title = ("Ordinary Magic: The Science of How We Can Achieve Big "
+                 "Change with Small Acts")
+        cfg = self.make_cfg(
+            "<p>%s</p>\n" % title,
+            "@@@SEG 001@@@\n@@@VERBATIM@@@\n%s\n" % title,
+            terms="English\t中文\n%s\t%s\tkeep\n" % (title, title))
         self.assertEqual(chunks.check_file(cfg, "c.xhtml", only_chunk=1), [])
 
     def test_residue_chunk_is_not_counted_as_progress(self):

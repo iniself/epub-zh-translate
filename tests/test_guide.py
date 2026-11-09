@@ -463,5 +463,89 @@ class DecisionsNoteTest(unittest.TestCase):
         self.assertIsNone(guide.decisions_note_hint(self.cfg, index=index))
 
 
+class TermTableTest(unittest.TestCase):
+    def cfg(self, text):
+        root = Path(tempfile.mkdtemp())
+        path = root / "terms.tsv"
+        path.write_text(text, encoding="utf-8")
+        return SimpleNamespace(terms_tsv=path)
+
+    def test_keep_rows_accept_two_spellings(self):
+        cfg = self.cfg("English\t中文\n"
+                       "VIKING\tVIKING\n"
+                       "Gregory M. Walton\t-\tkeep\n"
+                       "MCP\tkeep\n"
+                       "agent\t智能体\n")
+        self.assertEqual(guide.keep_terms(cfg),
+                         ["VIKING", "Gregory M. Walton", "MCP"])
+        self.assertTrue(guide.term_is_keep("VIKING", "viking"))
+        self.assertFalse(guide.term_is_keep("agent", "智能体"))
+
+    def test_rows_without_a_rendering_are_skipped(self):
+        cfg = self.cfg("English\t中文\nagent\t\nagentic\t智能体式\n")
+        self.assertEqual(guide.read_terms(cfg),
+                         [("agentic", "智能体式", "")])
+
+    def test_keep_term_must_not_be_a_sentence(self):
+        self.assertTrue(guide.keep_term_is_valid("VIKING ship colophon"))
+        self.assertTrue(guide.keep_term_is_valid("Gregory M. Walton"))
+        self.assertTrue(guide.keep_term_is_valid("J. R. R. Tolkien"))
+        self.assertFalse(guide.keep_term_is_valid(
+            "They saw the pattern and changed their minds."))
+        self.assertFalse(guide.keep_term_is_valid(
+            "This heading keeps going past the limit of sixteen words "
+            "and should never be registered as a name"))
+
+    def test_an_invalid_keep_row_is_not_honored_by_checks(self):
+        sentence = "They saw the pattern and changed their minds."
+        cfg = self.cfg("English\t中文\n%s\t%s\tkeep\n" % (sentence, sentence))
+        self.assertEqual(guide.keep_terms(cfg), [])
+        pairs, kept = guide.terms_for_chunk(
+            cfg, "@@@SEG 001@@@\n%s And they moved on." % sentence)
+        self.assertEqual((pairs, kept), ([], []))
+
+    def test_chunk_terms_are_split_into_translate_and_keep(self):
+        cfg = self.cfg("English\t中文\n"
+                       "agent\t智能体\n"
+                       "VIKING\tVIKING\tkeep\n")
+        pairs, kept = guide.terms_for_chunk(
+            cfg, "@@@SEG 001@@@\nThe agent sails for VIKING.")
+        self.assertEqual(pairs, [("agent", "智能体")])
+        self.assertEqual(kept, ["VIKING"])
+
+    def test_prompt_separates_keep_terms(self):
+        cfg = self.cfg("English\t中文\n"
+                       "agent\t智能体\n"
+                       "VIKING\tVIKING\tkeep\n")
+        text = "\n".join(guide._terms_section(
+            cfg, "@@@SEG 001@@@\nThe agent sails for VIKING."))
+        self.assertIn("| agent | 智能体 |", text)
+        self.assertIn("本块保留原文（不要翻译）", text)
+        self.assertIn("- VIKING", text)
+
+    def test_seed_terms_starts_with_an_empty_table(self):
+        root = Path(tempfile.mkdtemp())
+        cfg = SimpleNamespace(work_dir=root, terms_tsv=root / "terms.tsv")
+        guide.seed_terms(cfg)
+        self.assertEqual(cfg.terms_tsv.read_text(encoding="utf-8"),
+                         "English\t中文\n")
+        self.assertEqual(guide.read_terms(cfg), [])
+
+    def test_rendered_guide_keeps_keep_rows_out_of_the_table(self):
+        root = Path(tempfile.mkdtemp())
+        cfg = SimpleNamespace(
+            title="书名", source_title="Original", author="Author",
+            language="zh-CN", work_dir=root,
+            terms_tsv=root / "terms.tsv",
+            guide_file=root / "TRANSLATION_GUIDE.md")
+        cfg.terms_tsv.write_text(
+            "English\t中文\nagent\t智能体\nVIKING\tVIKING\tkeep\n",
+            encoding="utf-8")
+        text, _ = guide.render_guide_text(cfg)
+        self.assertIn("| agent | 智能体 |", text)
+        self.assertNotIn("| VIKING | VIKING |", text)
+        self.assertIn("- VIKING", text)
+
+
 if __name__ == "__main__":
     unittest.main()

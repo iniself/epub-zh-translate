@@ -972,13 +972,14 @@ def content_ok(cfg, name, indices):
         return {ci: False for ci in indices}
     if err:
         return {ci: False for ci in indices}
+    keep = keep_patterns(cfg)
     result = {}
     for ci in indices:
         if not 1 <= ci <= len(groups):
             result[ci] = False
             continue
         found, _ = _check_chunk(cfg, name, ci, groups[ci - 1], fix=False,
-                                verbose=False)
+                                verbose=False, keep_terms=keep)
         result[ci] = not found
     return result
 
@@ -1157,6 +1158,35 @@ def _is_parenthetical(text, start, end):
             and after.startswith(("）", ")")))
 
 
+def _compile_keep(terms):
+    """Compile whole-phrase matchers for keep terms from the glossary."""
+    return [re.compile(r"(?<![A-Za-z])" + re.escape(term) + r"(?![A-Za-z])",
+                       re.IGNORECASE)
+            for term in terms if term.strip()]
+
+
+def _mask_terms(text, patterns):
+    """Blank out registered keep terms so they cannot look like residue.
+
+    Masking with spaces keeps every other character at its original offset,
+    so the residue span still points at the same text the translator sees.
+    """
+    if not patterns:
+        return text
+    for pattern in patterns:
+        if pattern.search(text):
+            text = pattern.sub(lambda m: " " * len(m.group(0)), text)
+    return text
+
+
+def keep_patterns(cfg):
+    """Compiled keep-term matchers from work/terms.tsv (empty when absent)."""
+    if not getattr(cfg, "terms_tsv", None):
+        return ()
+    from . import guide
+    return _compile_keep(guide.keep_terms(cfg))
+
+
 def _untranslated_spans(source, translated, limit=3):
     """Return copied source phrases still sitting in the translation.
 
@@ -1239,11 +1269,14 @@ def _load_source(cfg, name):
 
 
 def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
-                 verbose=True):
+                 verbose=True, keep_terms=()):
     """Check one chunk. Returns ``(problems, issues)``.
 
     ``issues`` carries one dict per failing segment so callers can register
     the source text and the current translation for manual repair.
+    ``keep_terms`` holds compiled matchers for glossary terms registered as
+    "keep English"; they are blanked before residue checks so a registered
+    trademark or name is not reported as untranslated prose.
     """
     stem = Path(name).stem
     path = cfg.zh_dir / chunk_name(stem, ci)
@@ -1323,7 +1356,8 @@ def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
                            "detail": bad})
             continue
         if keep:
-            if _verbatim_is_prose(seg.text):
+            source_body = _mask_terms(seg.text, keep_terms)
+            if _verbatim_is_prose(source_body):
                 detail = ("@@@VERBATIM@@@ on a prose segment: translate it; "
                           "only code, commands, logs, and URLs may stay in "
                           "the source language")
@@ -1335,10 +1369,15 @@ def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
                                "detail": detail})
             continue
         body = markup.strip_placeholders(text).strip()
+        if keep_terms and re.search("[A-Za-z]", body) \
+                and not re.search("[A-Za-z]", _mask_terms(body, keep_terms)):
+            # The segment is made only of registered keep terms: a name or
+            # trademark the glossary already decided to leave in English.
+            continue
         short = len(body) <= 3 and " " not in body
         if cfg.require_latin and re.search("[A-Za-z]", seg.text) \
                 and not CJK_RE.search(body) and not short \
-                and _looks_translatable(body):
+                and _looks_translatable(_mask_terms(body, keep_terms)):
             detail = ("not translated (if this is a name, address, code, or "
                       "heading that should stay in the source language, add a "
                       "separate @@@VERBATIM@@@ line in this segment)")
@@ -1350,7 +1389,8 @@ def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
                            "detail": detail})
             continue
         if cfg.require_latin:
-            runs = _untranslated_spans(seg.text, text)
+            runs = _untranslated_spans(_mask_terms(seg.text, keep_terms),
+                                       _mask_terms(text, keep_terms))
             if runs:
                 detail = ('untranslated source text still in the translation: '
                           '%s; translate it (names, terms, and code may stay '
@@ -1373,7 +1413,8 @@ def chunk_issues(cfg, name, ci):
     if ci < 1 or ci > len(chunks):
         raise SystemExit("%s: chunk must be 1..%d" % (name, len(chunks)))
     _, issues = _check_chunk(cfg, name, ci, chunks[ci - 1], fix=True,
-                             placeholders=False, verbose=False)
+                             placeholders=False, verbose=False,
+                             keep_terms=keep_patterns(cfg))
     return issues
 
 
@@ -1408,11 +1449,12 @@ def check_file(cfg, name, only_chunk=None, fix=True, skip_missing=False,
     else:
         targets = list(enumerate(chunks, 1))
     stem = Path(name).stem
+    keep = keep_patterns(cfg)
     for ci, chunk in targets:
         path = cfg.zh_dir / chunk_name(stem, ci)
         if skip_missing and not path.exists():
             continue
         found, _ = _check_chunk(cfg, name, ci, chunk, fix=fix,
-                                placeholders=placeholders)
+                                placeholders=placeholders, keep_terms=keep)
         problems.extend(found)
     return problems

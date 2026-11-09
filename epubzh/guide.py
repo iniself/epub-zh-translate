@@ -15,9 +15,51 @@ from . import chunks, markup, review, toc
 MAX_PROMPT_TERMS = 60
 MAX_INTRODUCED = 80
 
+# Notes that mark a row as "keep this English term" instead of translating it.
+# A dash in the Chinese column is accepted too: it is the natural way to say
+# "no Chinese rendering".
+KEEP_NOTES = {"keep", "保留", "保留英文", "不翻译", "-", "—", "–"}
+
+# A keep row is for names, brands, and titles. A whole sentence registered as
+# "keep" is an attempt to skip translation, so it is ignored by checks and
+# reported by the audit. Titles rarely exceed this many words or carry
+# sentence punctuation, while paragraphs do.
+MAX_KEEP_WORDS = 16
+
+# A single capital followed by a period is an initial ("Gregory M. Walton"),
+# not a sentence boundary. Strip those before looking for sentence punctuation.
+INITIAL_DOT_RE = re.compile(r"(?<![A-Za-z])[A-Z]\.(?![A-Za-z])")
+SENTENCE_PUNCT_RE = re.compile(r"[!?。！？]|\.\s*$")
+
+
+def keep_term_is_valid(term):
+    """True when a keep row looks like a name or title, not a sentence."""
+    text = INITIAL_DOT_RE.sub("", term).strip()
+    if SENTENCE_PUNCT_RE.search(text):
+        return False
+    return len(term.split()) <= MAX_KEEP_WORDS
+
+
+def term_is_keep(en, zh, note=""):
+    """True when a glossary row says to keep the English term untranslated.
+
+    Two spellings are accepted: the Chinese cell repeats the English term, or
+    one of the cells says ``keep`` / ``保留`` / ``-``. The second spelling keeps
+    the row readable when the term itself is long or contains slashes.
+    """
+    if (note or "").strip().lower() in KEEP_NOTES:
+        return True
+    if (zh or "").strip().lower() in KEEP_NOTES:
+        return True
+    return (zh or "").strip().casefold() == (en or "").strip().casefold()
+
 
 def read_terms(cfg):
-    """Return [(english, chinese, note)] from work/terms.tsv."""
+    """Return [(english, chinese, note)] from work/terms.tsv.
+
+    A keep row is normalised to ``(english, english, note)`` so callers only
+    need one check to tell "translate to this" from "leave this in English".
+    """
     rows = []
     if not cfg.terms_tsv.exists():
         return rows
@@ -26,11 +68,28 @@ def read_terms(cfg):
             if len(row) < 2:
                 continue
             en, zh = row[0].strip(), row[1].strip()
-            if not en or en == "English" or not zh:
+            if not en or en == "English":
                 continue
             note = row[2].strip() if len(row) > 2 else ""
+            if term_is_keep(en, zh, note):
+                zh = en
+            elif not zh:
+                continue
             rows.append((en, zh, note))
     return rows
+
+
+def keep_terms(cfg):
+    """English terms the glossary says to leave untranslated.
+
+    Rows that look like whole sentences are dropped here: honoring them would
+    let a translator skip a paragraph by registering it as "keep". The audit
+    still reports those rows and the build gate refuses them.
+    """
+    if not getattr(cfg, "terms_tsv", None):
+        return []
+    return [en for en, zh, note in read_terms(cfg)
+            if term_is_keep(en, zh, note) and keep_term_is_valid(en)]
 
 
 def seed_terms(cfg):
@@ -39,7 +98,8 @@ def seed_terms(cfg):
     cfg.work_dir.mkdir(parents=True, exist_ok=True)
     cfg.terms_tsv.write_text(
         config_mod.DEFAULT_TERMS.read_text(encoding="utf-8"), encoding="utf-8")
-    print("wrote %s (edit this glossary before translating)" % cfg.terms_tsv)
+    print("wrote %s (the agent fills it as the book is translated)"
+          % cfg.terms_tsv)
 
 
 # Both files are injected into later chunk prompts once they have content. The
@@ -105,9 +165,19 @@ def render_guide_text(cfg):
     """Rendered guide text plus the number of glossary rows."""
     template = config_mod.DEFAULT_GUIDE_TEMPLATE.read_text(encoding="utf-8")
     terms = read_terms(cfg)
-    table = "\n".join("| %s | %s |" % (en, zh) for en, zh, _ in terms)
+    pairs = [(en, zh) for en, zh, note in terms
+             if not term_is_keep(en, zh, note)]
+    kept = [en for en, zh, note in terms
+            if term_is_keep(en, zh, note) and keep_term_is_valid(en)]
+    bad = [en for en, zh, note in terms
+           if term_is_keep(en, zh, note) and not keep_term_is_valid(en)]
+    table = "\n".join("| %s | %s |" % (en, zh) for en, zh in pairs)
     if not table:
         table = "| （在此填写术语） | |"
+    keep_lines = ["- %s" % en for en in kept]
+    keep_lines += ["- %s（无效：keep 行不能是整句，请改成译名或删除）" % en
+                   for en in bad]
+    keep_text = "\n".join(keep_lines) or "（暂无）"
     text = (template
             .replace("{{TITLE}}", cfg.title or "（中文书名）")
             .replace("{{SOURCE_TITLE}}", cfg.source_title or cfg.title)
@@ -116,6 +186,7 @@ def render_guide_text(cfg):
             .replace("{{OPEN}}", "\u27e6")
             .replace("{{CLOSE}}", "\u27e7")
             .replace("{{TERMS}}", table)
+            .replace("{{KEEP}}", keep_text)
             .replace("{{WORK}}", str(cfg.work_dir)))
     return text, len(terms)
 
@@ -183,15 +254,53 @@ def canonical_term(zh):
 
 
 def terms_for_chunk(cfg, text):
-    """Terms that plausibly occur in this chunk, capped for prompt size."""
+    """Terms that plausibly occur in this chunk, capped for prompt size.
+
+    Returns ``(pairs, kept)``: ``pairs`` are ``(english, chinese)`` rows that
+    must be translated, ``kept`` are English terms registered as "keep".
+    """
     plain = markup.strip_placeholders(text)
-    hits = []
+    pairs, kept = [], []
     for en, zh, note in read_terms(cfg):
-        m = _term_pattern(en).findall(plain)
-        if m:
-            hits.append((len(m), en, canonical_term(zh) or zh))
-    hits.sort(key=lambda x: (-x[0], x[1].lower()))
-    return [(en, zh) for _, en, zh in hits[:MAX_PROMPT_TERMS]]
+        count = len(_term_pattern(en).findall(plain))
+        if not count:
+            continue
+        if term_is_keep(en, zh, note):
+            # Invalid keep rows are left out: the prompt must not invite the
+            # model to skip a sentence. The audit reports them separately.
+            if keep_term_is_valid(en):
+                kept.append((count, en))
+        else:
+            pairs.append((count, en, canonical_term(zh) or zh))
+    pairs.sort(key=lambda x: (-x[0], x[1].lower()))
+    kept.sort(key=lambda x: (-x[0], x[1].lower()))
+    return ([(en, zh) for _, en, zh in pairs[:MAX_PROMPT_TERMS]],
+            [en for _, en in kept[:MAX_PROMPT_TERMS]])
+
+
+def _terms_section(cfg, chunk_text):
+    """Prompt lines for this chunk's glossary decisions."""
+    pairs, kept = terms_for_chunk(cfg, chunk_text)
+    lines = ["## 本块术语（必须统一使用）", ""]
+    if pairs:
+        lines.append("| 英文 | 中文 |")
+        lines.append("| --- | --- |")
+        for en, zh in pairs:
+            lines.append("| %s | %s |" % (en, zh))
+        lines.append("")
+        lines.append("表中没有的术语，先查 `%s`，不要自创变体。" % cfg.terms_tsv)
+    else:
+        lines.append("本块未命中术语表；遇到术语先查 `%s`。" % cfg.terms_tsv)
+    lines.append("")
+    if kept:
+        lines.append("## 本块保留原文（不要翻译）")
+        lines.append("")
+        lines.append("以下专名已决定保留英文，译文中保持原样：")
+        lines.append("")
+        for en in kept:
+            lines.append("- %s" % en)
+        lines.append("")
+    return lines
 
 
 def _read_introduced(path):
@@ -293,12 +402,17 @@ def introduced_for_chunk(cfg, chunk_text, exclude=None):
 
     Restricting the list to the current chunk keeps the prompt short and
     actionable instead of dumping every annotation in the book. ``exclude``
-    keeps a retranslated chunk from seeing its own old copy.
+    keeps a retranslated chunk from seeing its own old copy. Terms registered
+    as "keep" are skipped: telling the model to use Chinese only would
+    contradict the glossary.
     """
     plain = markup.strip_placeholders(chunk_text)
+    kept = {en.lower() for en in keep_terms(cfg)}
     out = []
     for en in introduced(cfg, exclude=exclude):
         if len(en) < 2 or not re.search(r"[A-Za-z]{2}", en):
+            continue
+        if en.lower() in kept:
             continue
         if _term_pattern(en).search(plain):
             out.append(en)
@@ -468,7 +582,11 @@ def _aligned_contract(cfg, stem, chunk, dst, state, last, nseg):
 5. 每轮 = 改 TEXT/SPAN + 自检；用自检末尾的 `N problem(s)` 判断进展，最多 6 轮。
    数字变小就继续，没变小就停（aligned 模式没有 `--placeholders` 兜底）。
    停止时回复一行 `失败：<原因>`，不要问用户。
-6. 完成后只回复一行：`已写入 %s；check OK`
+6. 完成后只回复两行：
+   `已写入 %s；check OK`
+   `新术语：<English>=<中文>` 或 `<English>=keep`，多个用 `；` 分隔；没有就写
+   `新术语：无`。只列本块新出现、以后章节还要保持一致的术语和专名；路人人名、
+   一次性地址、URL、邮箱不用列。
 """ % (first, second, check_cmd, dst)
 
 
@@ -582,7 +700,11 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
      `check --chunk --fix --placeholders` 再自检；仍没变小就停；
    - 其它错误不要用兜底，直接停。
    停止时回复一行 `失败：<原因>`，不要问用户。
-6. 完成后只回复一行：`已写入 %s；check OK`
+6. 完成后只回复两行：
+   `已写入 %s；check OK`
+   `新术语：<English>=<中文>` 或 `<English>=keep`，多个用 `；` 分隔；没有就写
+   `新术语：无`。只列本块新出现、以后章节还要保持一致的术语和专名；路人人名、
+   一次性地址、URL、邮箱不用列。
 """ % (first, second, step3, check_cmd, dst)
 
 
@@ -673,19 +795,7 @@ def _build_prompt(cfg, name, chunk, index, full=False):
     if aligned:
         parts.append(_aligned_rules().rstrip())
         parts.append("")
-        terms = terms_for_chunk(cfg, chunk_text)
-        parts.append("## 本块术语（必须统一使用）")
-        parts.append("")
-        if terms:
-            parts.append("| 英文 | 中文 |")
-            parts.append("| --- | --- |")
-            for en, zh in terms:
-                parts.append("| %s | %s |" % (en, zh))
-            parts.append("")
-            parts.append("表中没有的术语，先查 `%s`，不要自创变体。" % cfg.terms_tsv)
-        else:
-            parts.append("本块未命中术语表；遇到术语先查 `%s`。" % cfg.terms_tsv)
-        parts.append("")
+        parts.extend(_terms_section(cfg, chunk_text))
     elif use_full:
         parts.append("## 翻译规范（完整，请逐条执行）")
         parts.append("")
@@ -702,20 +812,7 @@ def _build_prompt(cfg, name, chunk, index, full=False):
         parts.append("")
         parts.append(_rulecard().rstrip())
         parts.append("")
-
-        terms = terms_for_chunk(cfg, chunk_text)
-        parts.append("## 本块术语（必须统一使用）")
-        parts.append("")
-        if terms:
-            parts.append("| 英文 | 中文 |")
-            parts.append("| --- | --- |")
-            for en, zh in terms:
-                parts.append("| %s | %s |" % (en, zh))
-            parts.append("")
-            parts.append("表中没有的术语，先查 `%s`，不要自创变体。" % cfg.terms_tsv)
-        else:
-            parts.append("本块未命中术语表；遇到术语先查 `%s`。" % cfg.terms_tsv)
-        parts.append("")
+        parts.extend(_terms_section(cfg, chunk_text))
 
     singles = _single_marker_segments(chunk_text)
     if singles:
@@ -826,8 +923,9 @@ def _build_brief_prompt(cfg, name, chunk, index):
             "   `%s`" % check_cmd,
             "   每轮只改报错的段，最多 6 轮；按 `N problem(s)` 是否变小决定继续，"
             "没变小就回复 `失败：<原因>`。",
-            "6. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
-            % dst,
+            "6. 通过后回复 `已写入 %s；check OK`，并另起一行 "
+            "`新术语：<English>=<中文>` 或 `<English>=keep`（多个用 `；`，没有写 "
+            "`新术语：无`）；失败回复一行 `失败：<原因>`。" % dst,
         ]) + "\n"
 
     return "\n".join([
@@ -857,8 +955,9 @@ def _build_brief_prompt(cfg, name, chunk, index):
         "只跑 `--fix` 不算修复，没有编辑过不许回复失败；",
         "   数字没变小且只剩占位符错误、还没用过兜底时，才加 `--placeholders`"
         " 再查一次；仍不过就回复 `失败：<原因>`。",
-        "4. 通过后回复一行 `已写入 %s；check OK`；失败回复一行 `失败：<原因>`。"
-        % dst,
+        "4. 通过后回复 `已写入 %s；check OK`，并另起一行 `新术语：<English>=<中文>`"
+        " 或 `<English>=keep`（多个用 `；`，没有写 `新术语：无`）；失败回复一行 "
+        "`失败：<原因>`。" % dst,
     ]) + "\n"
 
 
