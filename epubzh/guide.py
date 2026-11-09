@@ -585,8 +585,8 @@ def _aligned_contract(cfg, stem, chunk, dst, state, last, nseg):
 6. 完成后只回复两行：
    `已写入 %s；check OK`
    `新术语：<English>=<中文>` 或 `<English>=keep`，多个用 `；` 分隔；没有就写
-   `新术语：无`。只列本块新出现、以后章节还要保持一致的术语和专名；路人人名、
-   一次性地址、URL、邮箱不用列。
+   `新术语：无`。凡是人名、机构名、产品名、框架名、概念名、标题关键词都列出来；
+   普通描述、路人人名、一次性地址、URL、邮箱不用列。拿不准就列。
 """ % (first, second, check_cmd, dst)
 
 
@@ -703,8 +703,8 @@ def _contract(cfg, stem, chunk, dst, state, last, nseg):
 6. 完成后只回复两行：
    `已写入 %s；check OK`
    `新术语：<English>=<中文>` 或 `<English>=keep`，多个用 `；` 分隔；没有就写
-   `新术语：无`。只列本块新出现、以后章节还要保持一致的术语和专名；路人人名、
-   一次性地址、URL、邮箱不用列。
+   `新术语：无`。凡是人名、机构名、产品名、框架名、概念名、标题关键词都列出来；
+   普通描述、路人人名、一次性地址、URL、邮箱不用列。拿不准就列。
 """ % (first, second, step3, check_cmd, dst)
 
 

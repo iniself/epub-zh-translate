@@ -70,6 +70,11 @@ class ContractTest(unittest.TestCase):
         self.assertNotIn("第一步动作是 `write` 输出文件", text)
         self.assertIn("正确的 1..10 段", text)
 
+    def test_new_terms_are_chosen_by_word_type_not_future_use(self):
+        text = contract("pending")
+        self.assertIn("拿不准就列", text)
+        self.assertNotIn("以后章节", text)
+
     def test_repair_runs_check_fix_without_overwriting(self):
         text = contract("repair")
         self.assertIn("第一步动作是运行第 3 条的自检", text)
