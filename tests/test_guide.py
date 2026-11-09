@@ -72,8 +72,9 @@ class ContractTest(unittest.TestCase):
 
     def test_new_terms_are_chosen_by_word_type_not_future_use(self):
         text = contract("pending")
-        self.assertIn("拿不准就列", text)
+        self.assertIn("确实像名字或", text)
         self.assertNotIn("以后章节", text)
+        self.assertNotIn("拿不准就列", text)
 
     def test_repair_runs_check_fix_without_overwriting(self):
         text = contract("repair")

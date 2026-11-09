@@ -152,7 +152,7 @@ Building on the content summarization techniques from chapter 3, this chapter gu
 3. 全部通过后回复两行：`已写入 <输出文件>；check OK`，以及
    `新术语：<English>=<中文>` 或 `<English>=keep`（多个用 `；`，没有写 `新术语：无`）。
    只列人名、机构名、产品名、框架名、概念名和标题关键词；普通描述和路人人名不用列，
-   拿不准就列。
+   拿不准时只有确实像名字或术语的才列。
 
 ## 九、自检不通过时
 
