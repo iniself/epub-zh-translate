@@ -20,6 +20,22 @@ CODE_RE = re.compile(
     r"(?:[{}<>]|=>|#!/|^\s*[\$>#]\s|^\s*[\$>#]$|"
     r"\b(?:sudo|pip|npm|apt-get)\b)", re.MULTILINE)
 
+# Punctuation allowed between a cited English run and the closing
+# parenthesis: volume, year, and page ranges stay inside the parentheses.
+PAREN_TAIL_RE = re.compile(
+    r"^[\s\d.,;:?!–—\-/()\[\]“”\"'’？！。、；：，（）]{0,60}[）)]")
+
+# Bibliographic references keep authors, titles, journals, publishers, years,
+# and page ranges in the source language. These signals distinguish them from
+# prose that should have been translated.
+CITE_TITLE_RE = re.compile(r"[“\"][^”\"]{6,}[”\"]")
+CITE_YEAR_RE = re.compile(r"\b(?:19|20)\d\d\b")
+CITE_PAGES_RE = re.compile(r"\b\d{1,4}\s*[–—-]\s*\d{1,4}\b")
+CITE_VOLUME_RE = re.compile(r"\b\d+\s*\((?:19|20)\d\d\)\s*:\s*\d+")
+CITE_DOI_RE = re.compile(r"(?:doi\.org/|doi:\s*|https?://)\S+",
+                         re.IGNORECASE)
+CITE_PUBLISHER_RE = re.compile(r"\([^()]*,\s*(?:19|20)\d\d\)")
+
 # A copied source run shorter than this is a name or a common loanword; only
 # whole phrases are reported as untranslated text.
 MIN_RESIDUE_CHARS = 20
@@ -1151,11 +1167,36 @@ def _run_is_prose(run):
 
 
 def _is_parenthetical(text, start, end):
-    """True when the run sits inside （...）, the glossary annotation form."""
+    """True when the run sits inside （...）, a glossary note or citation.
+
+    A citation often keeps its volume, year, and pages inside the parentheses
+    after the longest English run ("... Journal 52 (2006): 473–88."), so the
+    closing parenthesis does not have to touch the run.
+    """
     before = text[:start].rstrip()
+    if not before.endswith(("（", "(")):
+        return False
     after = text[end:].lstrip()
-    return (before.endswith(("（", "("))
-            and after.startswith(("）", ")")))
+    if after.startswith(("）", ")")):
+        return True
+    return bool(PAREN_TAIL_RE.match(after))
+
+
+def _is_citation(text, start, end):
+    """True when the copied run is a bibliographic reference.
+
+    References legitimately keep authors, titles, journals, and page ranges in
+    the source language. The check looks slightly past the run because the
+    longest run usually stops at the journal name, before the volume and year.
+    """
+    run = text[start:end]
+    window = run + text[end:end + 90]
+    if CITE_DOI_RE.search(window) or CITE_VOLUME_RE.search(window):
+        return True
+    if CITE_TITLE_RE.search(run) and (CITE_YEAR_RE.search(window)
+                                      or CITE_PAGES_RE.search(window)):
+        return True
+    return bool(CITE_PUBLISHER_RE.search(window))
 
 
 def _compile_keep(terms):
@@ -1217,8 +1258,9 @@ def _untranslated_spans(source, translated, limit=3):
         stop = tokens[end - 1][2]
         run = target_body[start:stop]
         if len(run) >= MIN_RESIDUE_CHARS and _run_is_prose(run) \
-                and run not in found and not _is_parenthetical(
-                    target_body, start, stop):
+                and run not in found \
+                and not _is_parenthetical(target_body, start, stop) \
+                and not _is_citation(target_body, start, stop):
             found.append(run)
     return found
 

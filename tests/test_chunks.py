@@ -556,6 +556,48 @@ class UntranslatedSpanTest(unittest.TestCase):
         text = "他们把这种现象称为持续的不良行为模式（consistent pattern of bad behavior）。"
         self.assertEqual(chunks._untranslated_spans(source, text), [])
 
+    def test_bibliographic_references_may_stay_in_english(self):
+        cases = [
+            # Journal article: volume (year): pages.
+            "Jeffrey A. Hall, “Applying the Ideal Standards Model to Unmet "
+            "Expectations and Satisfaction in Friendship,” Studies in "
+            "Communication Sciences 14 (2014): 20-28.",
+            # Book with a title-cased name that would otherwise look like prose.
+            "Erving Goffman, The Presentation of Self in Everyday Life "
+            "(Anchor, 1959).",
+            # DOI-only reference.
+            "Paul Eastwick, “Online Dating: Can Science Find You Love?,” "
+            "Science Vs, doi.org/10.1038/s41586-020-0000-0.",
+        ]
+        for reference in cases:
+            source = "They studied it: " + reference
+            text = "他们研究过：" + reference
+            self.assertEqual(chunks._untranslated_spans(source, text), [],
+                             reference)
+
+    def test_citation_parenthesis_may_close_after_volume_and_pages(self):
+        source = ("They studied it: Jeffrey A. Hall, “Applying the Ideal "
+                  "Standards Model,” Studies in Communication Sciences "
+                  "14 (2014): 20-28.")
+        text = ("他们研究过：（Jeffrey A. Hall, “Applying the Ideal Standards "
+                "Model,” Studies in Communication Sciences 14 (2014): "
+                "20-28。）")
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
+    def test_wrapped_truncated_reference_is_allowed(self):
+        source = ("They studied it: Montoya, Horton, and Kirchner, “Is Actual "
+                  "Similarity Necessary for Attraction?”")
+        text = ("他们研究过：（Montoya, Horton, and Kirchner, “Is Actual "
+                "Similarity Necessary for Attraction?”）")
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
+    def test_english_prose_after_a_colon_is_still_flagged(self):
+        source = ("He said: the consistent pattern of bad behavior was obvious "
+                  "to everyone.")
+        text = "他说：consistent pattern of bad behavior 对所有人都很明显。"
+        self.assertEqual(chunks._untranslated_spans(source, text),
+                         ["consistent pattern of bad behavior"])
+
     def test_a_finished_translation_is_clean(self):
         self.assertEqual(
             chunks._untranslated_spans("They changed their minds", "他们改变了主意"),
