@@ -97,6 +97,23 @@ class TermsAuditTest(unittest.TestCase):
                        [("Gregory M. Walton wrote it.", "Gregory M. Walton 写了这本书。")])
         self.assertEqual(terms_audit.violations(cfg), [])
 
+    def test_inflected_forms_do_not_require_the_registered_rendering(self):
+        # "associates" and "associated" are different words from the registered
+        # term; demanding 熟人 in those sentences was a false alarm.
+        cfg = make_cfg("English\t中文\nassociate\t熟人\n",
+                       [("Junior associates joined.", "初级律师加入了。"),
+                        ("The two are associated.", "两者互相关联。"),
+                        ("They became associates.", "他们成了合作伙伴。")])
+        self.assertEqual(terms_audit.violations(cfg), [])
+
+    def test_the_registered_form_is_still_checked(self):
+        cfg = make_cfg("English\t中文\nassociate\t熟人\n",
+                       [("He is my associate.", "他是我的同事。"),
+                        ("He is my associate.", "他是我的熟人。")])
+        rows = terms_audit.violations(cfg)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0][0], rows[0][1]), (1, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

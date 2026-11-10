@@ -18,11 +18,14 @@ def split_variants(zh):
 
 
 def term_pattern(term):
-    """Regex matching an English term and its common inflections."""
-    body = re.escape(term)
-    if term.lower().endswith("y"):
-        body = re.escape(term[:-1]) + r"(?:y|ies)"
-    return re.compile(r"(?<![A-Za-z])" + body + r"(?:s|es|ed|ing)?(?![A-Za-z])",
+    """Regex matching the term exactly as written.
+
+    Inflections are deliberately not expanded: a glossary row names one term,
+    and ``associate`` must not require ``熟人`` in a sentence about ``junior
+    associates`` or the verb ``associated``. Register other forms explicitly
+    when a book really needs them.
+    """
+    return re.compile(r"(?<![A-Za-z])" + re.escape(term) + r"(?![A-Za-z])",
                       re.IGNORECASE)
 
 
