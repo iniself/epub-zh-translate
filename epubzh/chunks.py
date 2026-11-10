@@ -35,6 +35,12 @@ CITE_VOLUME_RE = re.compile(r"\b\d+\s*\((?:19|20)\d\d\)\s*:\s*\d+")
 CITE_DOI_RE = re.compile(r"(?:doi\.org/|doi:\s*|https?://)\S+",
                          re.IGNORECASE)
 CITE_PUBLISHER_RE = re.compile(r"\([^()]*,\s*(?:19|20)\d\d\)")
+# An author list ("Kuwabara, Luo, and Sheldon,") followed by an opening quote is
+# a reference even when the entry itself is truncated before the year.
+CITE_AUTHORS_RE = re.compile(
+    r"^[A-Z][\w.\-’']+(?:\s+[A-Z][\w.\-’']+)*"
+    r"(?:,\s*(?:(?:and|&)\s+)?[A-Z][\w.\-’']+(?:\s+[A-Z][\w.\-’']+)*)+"
+    r",?\s+[“\"]")
 
 # A copied source run shorter than this is a name or a common loanword; only
 # whole phrases are reported as untranslated text.
@@ -1193,8 +1199,14 @@ def _is_citation(text, start, end):
     window = run + text[end:end + 90]
     if CITE_DOI_RE.search(window) or CITE_VOLUME_RE.search(window):
         return True
-    if CITE_TITLE_RE.search(run) and (CITE_YEAR_RE.search(window)
+    # The run often stops inside a quoted title ("... Love?," 2018), so the
+    # closing quote may sit just past it.
+    if CITE_TITLE_RE.search(window) and (CITE_YEAR_RE.search(window)
                                       or CITE_PAGES_RE.search(window)):
+        return True
+    # Truncated entries carry neither a year nor pages: "Kuwabara, Luo, and
+    # Sheldon, “Multiplex Exchange Relations.”" is still a reference.
+    if CITE_AUTHORS_RE.match(run) and CITE_TITLE_RE.search(window):
         return True
     return bool(CITE_PUBLISHER_RE.search(window))
 

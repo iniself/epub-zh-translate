@@ -591,6 +591,24 @@ class UntranslatedSpanTest(unittest.TestCase):
                 "Similarity Necessary for Attraction?”）")
         self.assertEqual(chunks._untranslated_spans(source, text), [])
 
+    def test_reference_whose_run_stops_inside_a_title_is_allowed(self):
+        # The longest English run ends mid-title, before the closing quote, so
+        # the year and the quote both sit just past the run.
+        source = ("He listened to it: Paul Eastwick on Science Vs, podcast, "
+                  "season 5, episode 7, “Online Dating: Can Science Find You "
+                  "Love?,” October 26, 2018.")
+        text = ("他听过这期节目：Paul Eastwick on Science Vs, podcast, season 5, "
+                "episode 7, “Online Dating: Can Science Find You Love?,” "
+                "2018 年 10 月 26 日。")
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
+    def test_truncated_reference_without_a_year_is_allowed(self):
+        source = ("In many parts of Europe: Kuwabara, Luo, and Sheldon, "
+                  "“Multiplex Exchange Relations.”")
+        text = ("在欧洲的许多地方：Kuwabara, Luo, and Sheldon, "
+                "“Multiplex Exchange Relations.”")
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
     def test_english_prose_after_a_colon_is_still_flagged(self):
         source = ("He said: the consistent pattern of bad behavior was obvious "
                   "to everyone.")
