@@ -29,6 +29,35 @@ def term_pattern(term):
                       re.IGNORECASE)
 
 
+COLON_PLACEHOLDER_RE = re.compile(r"⟦\d+⟧[：:]⟦/\d+⟧")
+
+
+def _citation_tail_start(text):
+    """Index where a bibliographic tail begins, or None when there is none.
+
+    Endnotes put the reference after the lead ("lead：Author, “Title,” Journal
+    12 (2020): 1–10."). That tail is English on purpose, so a term found only
+    there must not demand a Chinese rendering.
+    """
+    match = COLON_PLACEHOLDER_RE.search(text)
+    start = match.end() if match else 0
+    tail = text[start:]
+    has_title = chunks.CITE_TITLE_RE.search(tail) and (
+        chunks.CITE_YEAR_RE.search(tail) or chunks.CITE_PAGES_RE.search(tail))
+    if (chunks.CITE_DOI_RE.search(tail) or chunks.CITE_VOLUME_RE.search(tail)
+            or chunks.CITE_PUBLISHER_RE.search(tail) or has_title):
+        return start
+    return None
+
+
+def searchable_source(text):
+    """Source text with a bibliographic tail blanked out."""
+    start = _citation_tail_start(text)
+    if start is None:
+        return text
+    return text[:start] + " " * (len(text) - start)
+
+
 def load_pairs(cfg, only=None):
     """Yield (file, chunk, seg, source, translation) for translated segments."""
     index = chunks.read_index(cfg)
@@ -82,7 +111,7 @@ def audit(cfg, only=None, strict=False, limit=20, terms=None,
         pattern = term_pattern(en)
         hits, misses, samples = 0, 0, []
         for name, ci, num, src, dst in pairs:
-            plain = markup.strip_placeholders(src)
+            plain = markup.strip_placeholders(searchable_source(src))
             if not pattern.search(plain):
                 continue
             if invalid_keep:

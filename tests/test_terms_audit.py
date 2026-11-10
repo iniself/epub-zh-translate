@@ -114,6 +114,36 @@ class TermsAuditTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0][0], rows[0][1]), (1, 1))
 
+    def test_a_term_inside_a_citation_is_not_a_miss(self):
+        # The reference keeps its English title on purpose.
+        cfg = make_cfg("English\t中文\nhouse system\t学院制\n",
+                       [("学校分学院的效果⟦1⟧：⟦/1⟧ Todd Zadow, “The School "
+                         "House System: Effects on Engagement,” Journal of "
+                         "School Life 12 (2023): 1–10.",
+                         "学校分学院的效果：Todd Zadow, “The School House "
+                         "System: Effects on Engagement,” Journal of School "
+                         "Life 12 (2023): 1–10.")])
+        self.assertEqual(terms_audit.violations(cfg), [])
+
+    def test_a_term_in_the_lead_is_still_checked(self):
+        cfg = make_cfg("English\t中文\nhouse system\t学院制\n",
+                       [("The house system matters⟦1⟧：⟦/1⟧ Todd Zadow, “The "
+                         "School House System,” Journal of School Life 12 "
+                         "(2023): 1–10.",
+                         "走班制很重要：Todd Zadow, “The School House System,” "
+                         "Journal of School Life 12 (2023): 1–10.")])
+        rows = terms_audit.violations(cfg)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], 1)
+
+    def test_a_keep_term_inside_a_citation_is_not_a_miss(self):
+        cfg = make_cfg("English\t中文\nViking\tViking\tkeep\n",
+                       [("The publisher was named⟦1⟧：⟦/1⟧ Jane Roe, “Vikings "
+                         "in Print,” Journal of Print 4 (2019): 5–9.",
+                         "出版社的名字来自：Jane Roe, “Vikings in Print,” "
+                         "Journal of Print 4 (2019): 5–9.")])
+        self.assertEqual(terms_audit.violations(cfg), [])
+
 
 if __name__ == "__main__":
     unittest.main()
