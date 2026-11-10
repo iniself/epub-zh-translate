@@ -288,7 +288,8 @@ def _terms_section(cfg, chunk_text):
         for en, zh in pairs:
             lines.append("| %s | %s |" % (en, zh))
         lines.append("")
-        lines.append("表中没有的术语，先查 `%s`，不要自创变体。" % cfg.terms_tsv)
+        lines.append("表中没有的术语，先查 `%s`，不要自创变体；"
+                     "缺失的写进回复的 `新术语` 行。" % cfg.terms_tsv)
     else:
         lines.append("本块未命中术语表；遇到术语先查 `%s`。" % cfg.terms_tsv)
     lines.append("")
