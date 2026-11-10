@@ -3,7 +3,9 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
+import re
 import tomllib
+from urllib.parse import unquote
 
 
 DEFAULT_CSS = Path(__file__).parent / "defaults" / "zh-overrides.css"
@@ -103,7 +105,7 @@ class Config:
     spacing: bool = True
     protect_tags: list = field(default_factory=list)
     css: Path | None = None
-    stylesheet: str = "OEBPS/Styles/stylesheet.css"
+    stylesheet: str = ""
     toc_labels: dict = field(default_factory=dict)
     contents_file: str = "contents.html"
     raw: dict = field(default_factory=dict)
@@ -249,7 +251,7 @@ def load(config_path="book.toml"):
         spacing=bool(typography.get("spacing", True)),
         protect_tags=list(protect),
         css=css,
-        stylesheet=typography.get("stylesheet", "OEBPS/Styles/stylesheet.css"),
+        stylesheet=typography.get("stylesheet", ""),
         toc_labels=dict(toc.get("labels", {})),
         contents_file=toc.get("contents_file", "contents.html"),
         raw=raw,
@@ -319,7 +321,10 @@ mode = "%s"
 [typography]
 spacing = true
 css = "default"
-stylesheet = "OEBPS/Styles/stylesheet.css"
+# Path of the book's own stylesheet, filled in at init from what the book
+# actually links (empty when it styles inline). The Chinese typography
+# overrides are installed as a separate file, so an empty value is fine.
+stylesheet = ""
 protect_tags = ["pre", "code", "kbd", "samp", "var", "tt"]
 
 [toc]
@@ -390,6 +395,58 @@ def set_extract_layout(path, text_dir, extensions):
                 line = 'text_dir = "%s"\n' % toml_escape(text_dir)
             elif key == "extensions":
                 line = "extensions = %s\n" % ext_value
+        out.append(line)
+    path.write_text("".join(out), encoding="utf-8")
+
+
+def detect_stylesheet(cfg):
+    """Return the stylesheet the book actually links, or "" when it has none.
+
+    Later links win in CSS, so the last one in the first document that has any
+    link is the one worth recording. Inline-only books get an empty value: the
+    typography overrides are added as a separate file and do not depend on it.
+    """
+    root = cfg.source_dir
+    if not root.is_dir():
+        return ""
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in (".html", ".xhtml", ".htm"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        hrefs = re.findall(r'<link\b[^>]*href="([^"]+\.css)"', text, re.IGNORECASE)
+        if not hrefs:
+            continue
+        target = (path.parent / unquote(hrefs[-1])).resolve()
+        try:
+            return target.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            return ""
+    for opf in sorted(root.rglob("*.opf")):
+        text = opf.read_text(encoding="utf-8", errors="ignore")
+        for tag in re.findall(r"<(?:\w+:)?item\b[^>]*>", text):
+            if "text/css" not in tag.lower():
+                continue
+            href = re.search(r'href="([^"]+)"', tag)
+            if not href:
+                continue
+            target = (opf.parent / unquote(href.group(1))).resolve()
+            try:
+                return target.relative_to(root.resolve()).as_posix()
+            except ValueError:
+                return ""
+    return ""
+
+
+def set_stylesheet(path, stylesheet):
+    """Rewrite the stylesheet path inside the [typography] section."""
+    path = Path(path)
+    out, in_typography = [], False
+    for line in path.read_text(encoding="utf-8").splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_typography = stripped == "[typography]"
+        elif in_typography and stripped.split("=", 1)[0].strip() == "stylesheet":
+            line = 'stylesheet = "%s"\n' % toml_escape(stylesheet)
         out.append(line)
     path.write_text("".join(out), encoding="utf-8")
 

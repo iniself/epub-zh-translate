@@ -155,24 +155,106 @@ def assemble(cfg, only=None):
     return _build_tree(cfg, only=only)
 
 
+CSS_NAME = "epubzh-zh.css"
+CSS_MARKER = 'data-epubzh="zh"'
+CSS_ID = "epubzh-zh-css"
+CSS_HEADER = "/* epubzh typography overrides */"
+
+
+def _find_package(root):
+    """Return the OPF package document of a build tree, if there is one."""
+    for path in sorted(root.rglob("*.opf")):
+        if "<package" in path.read_text(encoding="utf-8", errors="ignore"):
+            return path
+    return None
+
+
+def _css_target(cfg, root, opf):
+    """Directory that should hold the typography stylesheet."""
+    if cfg.stylesheet:
+        configured = root / cfg.stylesheet
+        if configured.parent.is_dir():
+            return configured.parent / CSS_NAME
+    existing = [p for p in root.rglob("*.css") if p.is_file()]
+    if existing:
+        return existing[0].parent / CSS_NAME
+    return (opf.parent if opf else root) / CSS_NAME
+
+
+def _link_documents(root, target, marker=CSS_MARKER):
+    """Add the stylesheet link to every content document; return the count."""
+    linked = 0
+    pattern = re.compile(r'<link\b[^>]*%s[^>]*/?>\s*' % re.escape(marker),
+                         re.IGNORECASE)
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in (".html", ".xhtml", ".htm"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        body = pattern.sub("", text)
+        href = Path(os.path.relpath(target, path.parent)).as_posix()
+        link = '<link rel="stylesheet" type="text/css" href="%s" %s/>' % (
+            href, marker)
+        head = re.search(r"</head\s*>", body, re.IGNORECASE)
+        if head:
+            body = body[:head.start()] + link + "\n" + body[head.start():]
+        else:
+            opening = re.search(r"<head\b[^>]*>", body, re.IGNORECASE)
+            if not opening:
+                continue
+            body = body[:opening.end()] + "\n" + link + body[opening.end():]
+        if body != text:
+            path.write_text(body, encoding="utf-8")
+        linked += 1
+    return linked
+
+
+def _register_stylesheet(opf, target):
+    """Add (or refresh) the stylesheet item in the OPF manifest."""
+    text = opf.read_text(encoding="utf-8")
+    href = Path(os.path.relpath(target, opf.parent)).as_posix()
+    text = re.sub(
+        r'<(?:\w+:)?item\b[^>]*id="%s"[^>]*/>\s*' % re.escape(CSS_ID),
+        "", text, flags=re.IGNORECASE)
+    item = '<item id="%s" href="%s" media-type="text/css"/>' % (CSS_ID, href)
+    manifest = re.search(r"</(?:\w+:)?manifest\s*>", text, re.IGNORECASE)
+    if not manifest:
+        print("css: no <manifest> in %s, stylesheet not registered" % opf)
+        return False
+    text = text[:manifest.start()] + item + "\n" + text[manifest.start():]
+    if not _well_formed(text):
+        print("css: registering the stylesheet would break %s, skipped" % opf)
+        return False
+    opf.write_text(text, encoding="utf-8")
+    return True
+
+
 def install_css(cfg):
+    """Install the Chinese typography overrides as a stylesheet of their own.
+
+    The book's own CSS is left untouched: the overrides go into a new file that
+    is registered in the OPF and linked from every content document. That works
+    whether the book ships external CSS, styles inline, or has none at all.
+    """
     if cfg.css is None:
         return
     css_path = Path(cfg.css)
     if not css_path.exists():
         print("css: missing %s, skipped" % css_path)
         return
-    stylesheet = cfg.build_dir / cfg.stylesheet
-    if not stylesheet.exists():
-        print("css: stylesheet not found: %s" % stylesheet)
+    root = cfg.build_dir
+    if not root.is_dir():
+        print("css: %s is missing, skipped" % root)
         return
-    base = stylesheet.read_text(encoding="utf-8")
-    extra = css_path.read_text(encoding="utf-8")
-    marker = "/* epubzh typography overrides */"
-    if marker in base:
-        base = base.split(marker)[0].rstrip() + "\n"
-    stylesheet.write_text(base + "\n" + marker + "\n" + extra, encoding="utf-8")
-    print("css: installed %s" % css_path.name)
+    opf = _find_package(root)
+    target = _css_target(cfg, root, opf)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(CSS_HEADER + "\n" + css_path.read_text(encoding="utf-8"),
+                      encoding="utf-8")
+    linked = _link_documents(root, target)
+    registered = _register_stylesheet(opf, target) if opf else False
+    print("css: installed %s into %d document(s)%s"
+          % (target.relative_to(root).as_posix(), linked,
+             "" if registered else " (not registered in the OPF)"))
 
 
 def _all_docs(root):

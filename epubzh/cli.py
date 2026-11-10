@@ -112,6 +112,13 @@ def cmd_init(args):
                 config.set_extract_layout(cfg.path, text_dir, extensions)
                 cfg = config.load(cfg_path)
                 print("layout  = %s (%s)" % (text_dir, ", ".join(extensions)))
+        stylesheet = config.detect_stylesheet(cfg)
+        if stylesheet:
+            config.set_stylesheet(cfg.path, stylesheet)
+            cfg = config.load(cfg_path)
+            print("css     = %s" % stylesheet)
+        else:
+            print("css     = none in the book; typography overrides are added as a separate file")
     wrapper = Path(__file__).resolve().parent.parent / "epubzh-run"
     if os.name == "nt":
         wrapper = wrapper.with_name(wrapper.name + ".cmd")
