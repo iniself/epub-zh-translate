@@ -419,9 +419,10 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 - 一行一个段：`file`、`chunk`、`seg`、`kind`（`placeholder` / `not-translated` /
   `structure` / `other`）、`source`（该段原文）、`translation`（当前译文）、`detail`（报错）。
-- **只有全部问题都是 `placeholder` 的块才能登记。** `not-translated`、`partial`、
-  `file missing`、段号/结构错误一律算未完成，会被拒绝并退回翻译队列；翻译内容始终由
-  agent 完成，用户不需要编辑 `work/zh`。
+- **只有全部问题都是 `placeholder`、并且该块的修复轮次已经用完（或已跑过兜底）的块才能登记。**
+  `not-translated`、`partial`、`file missing`、段号/结构错误一律算未完成，会被拒绝并退回
+  翻译队列；轮次没走完就登记也会被拒绝，提示继续修。翻译内容始终由 agent 完成，用户不需要
+  编辑 `work/zh`。
 - `review` 复检时，只要问题不全是 `placeholder`，整块就**退回翻译队列**（打印
   `requeued ...`），由 `next` 重新派发补译，不会留在清单里占位。
 - 被登记的块**不计入 `translated` 进度**：`status` 里按未完成算，`next` 的进度也会

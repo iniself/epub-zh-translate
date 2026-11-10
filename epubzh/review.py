@@ -144,10 +144,14 @@ def _kind_summary(issues):
 def add(cfg, name, ci):
     """Register a chunk's problems, replacing any earlier rows for it.
 
-    Only chunks whose every remaining issue is a placeholder failure are
-    accepted. A chunk with untranslated segments, a partial/missing file, or
-    structural damage is unfinished translation and must go back to the
-    translator instead.
+    Two gates protect the registry:
+
+    * every remaining issue must be a placeholder failure; untranslated
+      segments, a partial file, or structural damage mean the translation is
+      unfinished and must go back to the translator;
+    * the chunk's repair rounds must be spent (exhausted, or the automatic
+      fallback already ran). Registering on the first check hides work the
+      translator can still do.
     """
     name = _resolve(cfg, name)
     fresh = collect(cfg, name, ci)
@@ -157,6 +161,16 @@ def add(cfg, name, ci):
             "`check --chunk` again. Manual review only accepts placeholder "
             "failures after the repair rounds." % (name, ci,
                                                     _kind_summary(fresh)))
+    if fresh:
+        state = rounds.get(cfg, name, ci)
+        spent = int(state.get("rounds", 0))
+        finished = bool(state.get("exhausted") or state.get("fallback"))
+        if not finished:
+            raise SystemExit(
+                "%s chunk %d has used %d of %d repair round(s); keep fixing "
+                "and run `check --chunk` again. Manual review is the last "
+                "resort, not the first answer."
+                % (name, ci, spent, rounds.MAX_ROUNDS))
     rows = [row for row in read(cfg)
             if not (row["file"] == name and row["chunk"] == ci)]
     rows.extend(fresh)

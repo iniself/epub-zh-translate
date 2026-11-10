@@ -8,7 +8,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 
-from epubzh import assemble, review
+from epubzh import assemble, review, rounds
 
 
 def make_cfg(root):
@@ -51,6 +51,7 @@ class ReviewRegistryTest(unittest.TestCase):
 
     def test_add_records_source_and_translation(self):
         write_chunk(self.cfg, "⟦0⟧你好 世界")
+        rounds.mark_fallback(self.cfg, "c.xhtml", 1)
         rows = review.add(self.cfg, "c", 1)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["kind"], "placeholder")
@@ -59,8 +60,22 @@ class ReviewRegistryTest(unittest.TestCase):
         self.assertIn("placeholder", rows[0]["detail"])
         self.assertEqual(review.read(self.cfg), rows)
 
+    def test_add_refuses_before_the_repair_rounds_are_spent(self):
+        write_chunk(self.cfg, "⟦0⟧你好 世界")
+        with self.assertRaises(SystemExit) as raised:
+            review.add(self.cfg, "c", 1)
+        self.assertIn("repair round", str(raised.exception))
+        self.assertEqual(review.read(self.cfg), [])
+
+    def test_add_accepts_after_the_round_budget_is_exhausted(self):
+        write_chunk(self.cfg, "⟦0⟧你好 世界")
+        rounds.mark_exhausted(self.cfg, "c.xhtml", 1)
+        rows = review.add(self.cfg, "c", 1)
+        self.assertEqual([row["kind"] for row in rows], ["placeholder"])
+
     def test_recheck_clears_a_fixed_chunk(self):
         write_chunk(self.cfg, "⟦0⟧你好 世界")
+        rounds.mark_fallback(self.cfg, "c.xhtml", 1)
         review.add(self.cfg, "c", 1)
         self.assertEqual(len(review.recheck(self.cfg)), 1)
         write_chunk(self.cfg, "⟦0⟧你好⟦/0⟧ 世界")
@@ -69,6 +84,7 @@ class ReviewRegistryTest(unittest.TestCase):
 
     def test_add_replaces_previous_rows_for_the_chunk(self):
         write_chunk(self.cfg, "⟦0⟧你好 世界")
+        rounds.mark_fallback(self.cfg, "c.xhtml", 1)
         review.add(self.cfg, "c", 1)
         write_chunk(self.cfg, "⟦0⟧你好⟦/0⟧ 世界")
         review.add(self.cfg, "c", 1)
