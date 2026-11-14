@@ -1192,17 +1192,25 @@ def _is_citation(text, start, end):
     """True when the copied run is a bibliographic reference.
 
     References legitimately keep authors, titles, journals, and page ranges in
-    the source language. The check looks slightly past the run because the
-    longest run usually stops at the journal name, before the volume and year.
+    the source language. The window looks slightly past the run for volume,
+    year, or DOI, and slightly before it for an opening quote the run cut off.
     """
     run = text[start:end]
     # A run can start inside a quoted title: the author name before it is a
     # glossary keep term and was masked out, leaving '“How to Be Successful,”'.
-    # Look just past the run for a lead-in quote (three characters covers “, “#,
-    # and “-) but no further: a quote from an earlier sentence must not turn
-    # genuinely untranslated prose into a citation.
-    lead = text[max(0, start - 3):start]
-    lead = lead[lead.rfind("“"):] if "“" in lead else lead[-1:]
+    # Step left across inline punctuation only (no space, no letter) so the
+    # opening quote comes back, without reaching a quote from an earlier
+    # sentence.
+    lead = ""
+    i = start
+    while i > 0:
+        ch = text[i - 1]
+        if ch == "“":
+            lead = text[i - 1:start]
+            break
+        if ch.isalnum() or ch.isspace():
+            break
+        i -= 1
     window = lead + run + text[end:end + 90]
     if CITE_DOI_RE.search(window) or CITE_VOLUME_RE.search(window):
         return True

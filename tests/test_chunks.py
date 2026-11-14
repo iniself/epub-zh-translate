@@ -639,6 +639,13 @@ class CitationLeadInTest(unittest.TestCase):
         text = ("他写道：格雷格·布罗克曼, “#define CTO OpenAI,” (blog), 2017 年。")
         self.assertEqual(chunks._untranslated_spans(source, text), [])
 
+    def test_a_citation_whose_quoted_title_starts_with_an_at_sign(self):
+        # The quote is separated from the first word by "@", which is not a
+        # word character; the walk still reaches it.
+        source = ("He cited it: OpenAI, “@OpenAI on Twitter,” 2020.")
+        text = ("他引用了：OpenAI, “@OpenAI on Twitter,” 2020 年。")
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
     def test_a_quote_from_an_earlier_sentence_does_not_exempt_prose(self):
         source = ("He said: “Do not translate this.” Then the quick brown fox "
                   "jumps over the lazy dog, 2019.")
