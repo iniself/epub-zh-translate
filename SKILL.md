@@ -161,10 +161,13 @@ work：/path/to/books/mybook-zh-project/work
    运行 `status`。**不要先跑全项目 `check`**，未开始的分块会刷屏。不要覆盖已有译文。
    如果 `work/needs_review.tsv` 非空，说明上次留下了人工介入项：先运行 `review`
    复检（人工可能已经改好），清单清空后再继续。
-2. 阅读目录、前言和前两章（按书里实际存在的内容）：有 `work/toc.tsv` 就补译其中的标题；
-   没有就跳过，不要手工创建——它只从原书的 NCX / 导航文档生成。没有前言就从正文第一章开始，
-   不足两章按实际章节数读；封面、版权页、目录页不算正文第一章。然后完善 `work/terms.tsv`，
-   运行 `guide`；它会生成 `work/TRANSLATION_GUIDE.md`。
+2. 建术语表和风格基准：运行 `bootstrap`，按生成的 `work/prompts/bootstrap.md` 派**一个**
+   子代理（description 用 `Bootstrap glossary`），由它读目录、前言和前两章，写
+   `work/terms.candidates.tsv` 和 `work/style-brief.md`；回复只报条数，不贴原文。
+   子代理返回后运行 `terms-add` 合并候选（重复行和整句 keep 会被跳过），再运行 `guide`
+   生成 `work/TRANSLATION_GUIDE.md`。**主会话不要自己读章节原文**，阅读是子代理的活。
+   有 `work/toc.tsv` 时，其中待译的标题（通常几十行）由主会话补译；没有就跳过，不要手工创建。
+   `work/style-brief.md` 是风格草稿，第一章定稿后并进 `work/style.md`。
 3. 正文按分块翻译，流程见下面的“分块翻译”；每个分块写完后用 `check --chunk --fix` 自检。同一章的全部分块完成后运行 `check <章名>`，要求该章清零（段数、占位符、未翻译）。**每个分块通过后立即把本块新术语/专名登记进 `work/terms.tsv`**（见第五节），再翻下一块。
 4. 全部完成后先运行 `review`（它重查登记项、能修的清掉），再运行 `build`。`build`
    会先做一次统一体检：术语、人工介入、试合并、XML/链接/锚点，四类问题**一次全部列出**，
@@ -493,7 +496,8 @@ skill 会优先派 `translate`，不存在时自动退回 `general`。示例（�
   - `English<TAB>English<TAB>keep`（也可以中文列直接写 `keep` 或 `-`）：以后统一保留英文。
 - `keep` 只用于专名、商标、书名/标题，**不能把整句登记成 keep**；含句末标点或超过
   16 个词的 keep 行无效，`check` 不会放过它，`build` 会报“keep 行不能是整句”。
-- `init` 只写表头；开始前读目录、前言和前两章填第一批；之后**每个分块通过 `check`
+- `init` 只写表头；开始前运行 `bootstrap`，由子代理读目录、前言和前两章，产出
+  `work/terms.candidates.tsv`，主会话用 `terms-add` 合并进表；之后**每个分块通过 `check`
   后都要追加本块新出现的术语和专名**，两类都登记。判断标准看词的性质，不看以后会不会
   再出现：人名、机构名、产品名、框架名、概念名、章节标题里的关键词都登记；普通动词、
   形容词、一次性描述和例子里的路人不用登记。拿不准时，只有它确实像一个名字或术语

@@ -123,6 +123,130 @@ MIN_STYLE_LINES = 3
 MIN_DECISION_LINES = 1
 
 
+BOOTSTRAP_PROMPT = "bootstrap.md"
+TERMS_CANDIDATES = "terms.candidates.tsv"
+STYLE_BRIEF = "style-brief.md"
+BOOTSTRAP_DOCS = 12
+
+BOOTSTRAP_TEMPLATE = """你是这套中文译本的建表助手。主会话不读原文，只接收你写的两个文件。
+
+书：{title}
+原书名：{source_title}
+作者：{author}
+项目目录：{root}
+
+## 要读的文件（按阅读顺序，只列前 {docs} 个文档）
+{files}
+
+读法：先跳过封面、版权页、目录页，从前言或正文第一章开始，读满两章为止。
+每个文档只给了第一个分块，同一文档的 `*.02.txt`、`*.03.txt` 按编号接着读。
+图表说明、代码块扫一眼即可，不用逐字读。
+
+## 产出（必须写文件，不要在回复里贴原文或整张表）
+
+1. `{terms}`
+   - 无表头；每行 `English<TAB>中文<TAB>备注`，备注可以留空。
+   - 只收专名和概念名：人名、机构、产品、书名/文章名、反复出现的术语。
+     普通形容词、一次性描述、只出现一次的路人不要收。
+   - 决定保留英文的写 `English<TAB>English<TAB>keep`。
+   - 同一概念只写一行；中文用通行译名，没有通行译名就意译并在备注写 `暂定`。
+   - 最多 400 行。
+
+2. `{style}`
+   - 不超过 8 行，只写硬决定：人称、时态、语气、引号、注释与文献处理、数字与单位。
+   - 不写“忠实通顺”这类空话，不写例句。
+
+## 回复
+
+只回三行：`术语：N 条`、`风格：M 条`、`已读：<文档列表>`。
+不要贴原文段落，不要复述规则。
+"""
+
+
+def bootstrap_prompt(cfg):
+    """Write the prompt for the single subagent that builds the glossary.
+
+    Reading the opening chapters is what fills the glossary and the style
+    brief, but doing it in the main session leaves the whole source text in
+    the scheduler's context for the rest of the book. The subagent reads and
+    writes the two files; only a three-line summary comes back.
+    """
+    index = chunks.read_index(cfg)
+    names = _ordered_index(cfg, index)[:BOOTSTRAP_DOCS]
+    files = []
+    for name in names:
+        stem = Path(name).stem
+        count = len(chunks.chunk_counts(cfg, name, index[name]))
+        path = cfg.segs_dir / chunks.chunk_name(stem, 1)
+        shown = os.path.relpath(path, cfg.work_dir.parent)
+        files.append("- %s（共 %d 块）" % (shown, count))
+    text = BOOTSTRAP_TEMPLATE.format(
+        title=cfg.title or cfg.source_title,
+        source_title=cfg.source_title or "(not given)",
+        author=cfg.author or "(not given)",
+        root=cfg.work_dir.parent,
+        docs=BOOTSTRAP_DOCS,
+        files="\n".join(files) if files else "(no extracted segments)",
+        terms=os.path.relpath(cfg.work_dir / TERMS_CANDIDATES,
+                              cfg.work_dir.parent),
+        style=os.path.relpath(cfg.work_dir / STYLE_BRIEF,
+                              cfg.work_dir.parent))
+    path = cfg.prompts_dir / BOOTSTRAP_PROMPT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def import_terms(cfg, path=None):
+    """Merge the bootstrap subagent's candidate rows into work/terms.tsv.
+
+    Returns ``(added, skipped)`` where ``skipped`` is a list of
+    ``(english, reason)``. Unknown or malformed rows never reach the glossary:
+    the main session stays the only writer, and the subagent's output is
+    validated the same way a hand-written row would be.
+    """
+    path = Path(path) if path else cfg.work_dir / TERMS_CANDIDATES
+    if not path.exists():
+        raise SystemExit(
+            "terms: %s not found; run `bootstrap` and let the subagent write it"
+            % path)
+    known = {en.casefold() for en, _, _ in read_terms(cfg)}
+    added, skipped = [], []
+    with open(path, encoding="utf-8", newline="") as fh:
+        for row in csv.reader(fh, delimiter="\t"):
+            if not row:
+                continue
+            en = row[0].strip()
+            zh = row[1].strip() if len(row) > 1 else ""
+            note = row[2].strip() if len(row) > 2 else ""
+            if en.casefold() == "english" and zh in ("中文", "chinese"):
+                continue
+            if not en or (not zh and not term_is_keep(en, zh, note)):
+                skipped.append((en or "(empty)", "缺少英文或中文"))
+                continue
+            if term_is_keep(en, zh, note):
+                if not keep_term_is_valid(en):
+                    skipped.append((en, "keep 行不能是整句"))
+                    continue
+                zh = en
+            if en.casefold() in known:
+                skipped.append((en, "术语表里已有"))
+                continue
+            known.add(en.casefold())
+            added.append((en, zh, note))
+
+    cfg.terms_tsv.parent.mkdir(parents=True, exist_ok=True)
+    existing = cfg.terms_tsv.read_text(encoding="utf-8") \
+        if cfg.terms_tsv.exists() else "English\t中文\n"
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    lines = ["\t".join(part for part in (en, zh, note) if part)
+             for en, zh, note in added]
+    cfg.terms_tsv.write_text(existing + "".join(line + "\n" for line in lines),
+                             encoding="utf-8")
+    return added, skipped
+
+
 def seed_notes(cfg):
     """Create empty style/decisions templates when they are missing."""
     cfg.work_dir.mkdir(parents=True, exist_ok=True)

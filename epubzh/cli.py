@@ -40,7 +40,7 @@ def _hint_lines(tool, config_path):
     """Return follow-up commands with a shell-safe config path."""
     config_hint = guide.quote_path(config_path)
     return ["%s extract --config %s" % (tool, config_hint),
-            "%s guide   --config %s" % (tool, config_hint)]
+            "%s bootstrap --config %s" % (tool, config_hint)]
 
 
 def cmd_init(args):
@@ -503,6 +503,32 @@ def cmd_terms_audit(args):
     return 0
 
 
+def cmd_bootstrap(args):
+    cfg = config.load(args.config)
+    path = guide.bootstrap_prompt(cfg)
+    print("bootstrap: wrote %s" % path)
+    print("  dispatch one subagent with this prompt (description: Bootstrap glossary);")
+    print("  it writes:")
+    print("    %s" % (cfg.work_dir / guide.TERMS_CANDIDATES))
+    print("    %s" % (cfg.work_dir / guide.STYLE_BRIEF))
+    print("  then run: terms-add --config %s" % args.config)
+    print("            guide     --config %s" % args.config)
+
+
+def cmd_terms_add(args):
+    cfg = config.load(args.config)
+    added, skipped = guide.import_terms(cfg, args.file)
+    print("terms: added %d, skipped %d -> %s"
+          % (len(added), len(skipped), cfg.terms_tsv))
+    for english, reason in skipped[:5]:
+        print("  !! %s: %s" % (english, reason))
+    if skipped and len(skipped) > 5:
+        print("  ... %d more" % (len(skipped) - 5))
+    if not added:
+        print("  nothing new; check the candidate file or run `terms-audit`")
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="epubzh",
@@ -595,6 +621,15 @@ def build_parser():
     p.add_argument("--strict", action="store_true",
                    help="exit non-zero when any term is missing")
     p.set_defaults(func=cmd_terms_audit)
+
+    p = sub.add_parser("bootstrap",
+                       help="write the glossary/style prompt for one subagent")
+    p.set_defaults(func=cmd_bootstrap)
+
+    p = sub.add_parser("terms-add",
+                       help="merge work/terms.candidates.tsv into work/terms.tsv")
+    p.add_argument("file", nargs="?", help="candidate file (default: work/terms.candidates.tsv)")
+    p.set_defaults(func=cmd_terms_add)
 
     p = sub.add_parser("merge", help="assemble translated files without packaging")
     p.add_argument("--only", help="only merge files whose name contains this string")

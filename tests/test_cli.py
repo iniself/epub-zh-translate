@@ -16,7 +16,7 @@ class HintLinesTest(unittest.TestCase):
             lines[0],
             "epubzh-run extract --config '/books/World(zh)-project/book.toml'")
         self.assertIn(
-            "guide   --config '/books/World(zh)-project/book.toml'", lines[1])
+            "bootstrap --config '/books/World(zh)-project/book.toml'", lines[1])
 
     def test_leaves_a_plain_config_path_unquoted(self):
         lines = cli._hint_lines("epubzh-run", "/books/mybook-zh-project/book.toml")
