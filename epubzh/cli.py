@@ -75,10 +75,8 @@ def _session_hint(cfg):
         return
     state["done"] = done
     path.write_text(json.dumps(state) + "\n", encoding="utf-8")
-    print("hint: %d chunk(s) finished in this session; starting a new session "
-          "now keeps the context small. Translations, the glossary, and the "
-          "progress index are on disk, so nothing is lost."
-          % SESSION_HINT_EVERY)
+    print("hint: 本会话已翻完 %d 块，建议现在开一个新会话以保持上下文精简。"
+          "译文、术语表和进度都在磁盘上，不会丢失。" % SESSION_HINT_EVERY)
 
 
 def cmd_init(args):

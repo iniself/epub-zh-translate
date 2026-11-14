@@ -49,8 +49,8 @@ class SessionHintTest(unittest.TestCase):
                 progress.return_value = (29, 100)
                 self.assertIsNone(cli._session_hint(cfg))
             text = out.getvalue()
-            self.assertIn("new session", text)
-            self.assertIn("nothing is lost", text)
+            self.assertIn("新会话", text)
+            self.assertIn("不会丢失", text)
 
     def test_hint_is_skipped_without_a_session_id(self):
         with tempfile.TemporaryDirectory() as tmp:
