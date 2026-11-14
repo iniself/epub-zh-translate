@@ -1,5 +1,6 @@
 """Tests for the combined build preflight report."""
 import io
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -76,6 +77,38 @@ class CombinedBuildReportTest(unittest.TestCase):
         self.assertFalse(ok)
         package.assert_not_called()
         self.assertIn("structure: 1 problem(s)", out)
+
+
+class QuietMergeReportTest(unittest.TestCase):
+    def test_clean_files_stay_out_of_the_log(self):
+        root = Path(tempfile.mkdtemp()) / "build"
+        source = root.parent / "src"
+        (source / "OEBPS").mkdir(parents=True)
+        for name in ("a.xhtml", "b.xhtml", "c.xhtml"):
+            (source / "OEBPS" / name).write_text("<p>x</p>", encoding="utf-8")
+        cfg = SimpleNamespace(
+            source_dir=source, build_dir=root, text_dir="OEBPS",
+            index_file=root.parent / "index.json",
+            zh_dir=root.parent / "zh", protect_blocks=[], require_latin=True,
+            words_per_chunk=1200, max_segments_per_chunk=40, spacing=True,
+            protect_tags=[], mode=None)
+        verdicts = {"a.xhtml": (5, None, 0),
+                    "b.xhtml": (5, None, 1),
+                    "c.xhtml": (None, "chunk 1: missing segment 3", 0)}
+        out = io.StringIO()
+        with mock.patch.object(assemble.chunks, "read_index",
+                               return_value={name: {} for name in verdicts}), \
+                mock.patch.object(assemble, "_merge_file",
+                                  side_effect=lambda cfg, name: verdicts[name]), \
+                redirect_stdout(out):
+            errors = assemble._build_tree(cfg)
+        text = out.getvalue()
+        self.assertEqual(errors, [("c.xhtml", "chunk 1: missing segment 3")])
+        self.assertNotIn("a.xhtml", text)
+        self.assertIn("b.xhtml", text)
+        self.assertIn("untranslated=1", text)
+        self.assertIn("c.xhtml", text)
+        self.assertIn("2/3 files merged", text)
 
 
 if __name__ == "__main__":

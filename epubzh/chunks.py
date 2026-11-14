@@ -1196,7 +1196,12 @@ def _is_citation(text, start, end):
     longest run usually stops at the journal name, before the volume and year.
     """
     run = text[start:end]
-    window = run + text[end:end + 90]
+    # A run can start inside a quoted title: the author name before it is a
+    # glossary keep term and was masked out, leaving '“How to Be Successful,”'.
+    # Look back for the opening quote so the title still matches as a whole.
+    lead = text[max(0, start - 40):start]
+    lead = lead[lead.rfind("“"):] if "“" in lead else lead[-1:]
+    window = lead + run + text[end:end + 90]
     if CITE_DOI_RE.search(window) or CITE_VOLUME_RE.search(window):
         return True
     # The run often stops inside a quoted title ("... Love?," 2018), so the

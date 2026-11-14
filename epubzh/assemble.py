@@ -138,6 +138,10 @@ def _build_tree(cfg, only=None):
             report.append((name, "ok segs=%d%s" % (segs, note)))
 
     for name, status in report:
+        # A clean file needs no line of its own: the summary already counts it,
+        # and the scheduler's context pays for every line it has to keep.
+        if status.startswith("ok ") and " untranslated=" not in status:
+            continue
         print("%-38s %s" % (name, status))
     if only:
         print("\npartial merge (only matched %r); other files remain in source language" % only)
