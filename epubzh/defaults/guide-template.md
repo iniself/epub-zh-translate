@@ -157,6 +157,8 @@ Building on the content summarization techniques from chapter 3, this chapter gu
    `新术语：<English>=<中文>` 或 `<English>=keep`（多个用 `；`，没有写 `新术语：无`）。
    只列人名、机构名、产品名、框架名、概念名和标题关键词；普通描述和路人人名不用列，
    拿不准时只有确实像名字或术语的才列。
+4. 只写本分块的输出文件；不要修改 skill、流水线代码或翻译规范。怀疑检查器误报时，
+   照原样完成分块并回复 `失败：<原因>`，不要绕过去改规则。
 
 ## 九、自检不通过时
 

@@ -172,7 +172,7 @@ work：/path/to/books/mybook-zh-project/work
 4. 全部完成后先运行 `review`（它重查登记项、能修的清掉），再运行 `build`。`build`
    会先做一次统一体检：术语、人工介入、试合并、XML/链接/锚点，四类问题**一次全部列出**，
    有问题就停下、不生成成品；把整份清单一次改完后重新 `build`。
-5. 不要修改源 EPUB；不要手工改 `work/build` 里的文件，所有修改通过 `work/zh/`、`work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 完成。
+5. 不要修改源 EPUB；不要手工改 `work/build` 里的文件，所有修改通过 `work/zh/`、`work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 完成。**也不要修改 skill 本身**（`epubzh/`、`SKILL.md`、规范模板）：怀疑检查器误报时，把原文、译文和报错直接报告用户，不要改检查器或改规范去迁就译文；顺带定下的译法才写进 `work/decisions.md`。
 
 ### 分块翻译（照做，不要自己发明流程）
 
@@ -640,5 +640,6 @@ CONFIG="$PROJECT/book.toml"
 - `verify` 检查最终 EPUB 的结构、链接、锚点和占位符；它不替代 `epubcheck`。
 - 参数不确定时运行 `"$TOOL" <命令> --help`，不要凭记忆猜参数。
 - 不要修改源 EPUB；译文只写入 `work/zh/`，目录、`<pre>`、术语分别通过
-  `work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 维护。
+  `work/toc.tsv`、`work/pre.json`、`work/terms.tsv` 维护。skill 本身
+  （`epubzh/`、`SKILL.md`、规范模板）也不许改；检查器疑似误报就报告用户。
 - 这些命令由 agent 执行，不要让用户手动运行。
