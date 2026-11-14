@@ -1198,8 +1198,10 @@ def _is_citation(text, start, end):
     run = text[start:end]
     # A run can start inside a quoted title: the author name before it is a
     # glossary keep term and was masked out, leaving '“How to Be Successful,”'.
-    # Look back for the opening quote so the title still matches as a whole.
-    lead = text[max(0, start - 40):start]
+    # Look just past the run for a lead-in quote (three characters covers “, “#,
+    # and “-) but no further: a quote from an earlier sentence must not turn
+    # genuinely untranslated prose into a citation.
+    lead = text[max(0, start - 3):start]
     lead = lead[lead.rfind("“"):] if "“" in lead else lead[-1:]
     window = lead + run + text[end:end + 90]
     if CITE_DOI_RE.search(window) or CITE_VOLUME_RE.search(window):

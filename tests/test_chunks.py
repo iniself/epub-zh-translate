@@ -622,6 +622,32 @@ class UntranslatedSpanTest(unittest.TestCase):
             [])
 
 
+class CitationLeadInTest(unittest.TestCase):
+    def test_a_citation_whose_run_starts_inside_a_quoted_title(self):
+        # The author is rendered in Chinese, so the shared run begins at the
+        # title, right after the opening quote.
+        source = ("He said: Sam Altman, “How to Be Successful,” (blog), "
+                  "January 24, 2019.")
+        text = ("他说：萨姆·奥尔特曼, “How to Be Successful,” (blog), 2019 年。")
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
+    def test_a_citation_whose_quoted_title_starts_with_a_hash(self):
+        # "#" is not a word character, so the run begins at "define" and the
+        # opening quote sits two characters to its left.
+        source = ("He wrote: Greg Brockman, “#define CTO OpenAI,” (blog), "
+                  "January 9, 2017.")
+        text = ("他写道：格雷格·布罗克曼, “#define CTO OpenAI,” (blog), 2017 年。")
+        self.assertEqual(chunks._untranslated_spans(source, text), [])
+
+    def test_a_quote_from_an_earlier_sentence_does_not_exempt_prose(self):
+        source = ("He said: “Do not translate this.” Then the quick brown fox "
+                  "jumps over the lazy dog, 2019.")
+        text = ("他说：“这段不要翻。”然后 the quick brown fox jumps over the "
+                "lazy dog，2019 年。")
+        self.assertEqual(chunks._untranslated_spans(source, text),
+                         ["the quick brown fox jumps over the lazy dog"])
+
+
 class CheckFileResidueTest(unittest.TestCase):
     def make_cfg(self, source_html, translation, terms=None):
         root = Path(tempfile.mkdtemp())
