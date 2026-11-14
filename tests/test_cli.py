@@ -1,5 +1,7 @@
 """Tests for shell-safe command hints."""
 import io
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -30,6 +32,39 @@ class HintLinesTest(unittest.TestCase):
                 "C:\\Books\\World(zh)-project\\book.toml")
         self.assertIn(
             "--config 'C:\\Books\\World(zh)-project\\book.toml'", lines[0])
+
+
+class SessionHintTest(unittest.TestCase):
+    def test_hint_appears_only_after_the_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = SimpleNamespace(work_dir=Path(tmp))
+            out = io.StringIO()
+            with mock.patch.dict(os.environ,
+                                 {"OPENCODE_SESSION_ID": "ses_test"}), \
+                    mock.patch.object(cli.chunks, "progress",
+                                      return_value=(14, 100)) as progress, \
+                    redirect_stdout(out):
+                self.assertIsNone(cli._session_hint(cfg))
+                self.assertEqual(out.getvalue(), "")
+                progress.return_value = (29, 100)
+                self.assertIsNone(cli._session_hint(cfg))
+            text = out.getvalue()
+            self.assertIn("new session", text)
+            self.assertIn("nothing is lost", text)
+
+    def test_hint_is_skipped_without_a_session_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = SimpleNamespace(work_dir=Path(tmp))
+            env = {key: value for key, value in os.environ.items()
+                   if key != "OPENCODE_SESSION_ID"}
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=True), \
+                    mock.patch.object(cli.chunks, "progress",
+                                      return_value=(40, 100)) as progress, \
+                    redirect_stdout(out):
+                cli._session_hint(cfg)
+            self.assertEqual(out.getvalue(), "")
+            progress.assert_not_called()
 
 
 class NextActionTest(unittest.TestCase):

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Command line interface for the epubzh pipeline."""
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -41,6 +42,43 @@ def _hint_lines(tool, config_path):
     config_hint = guide.quote_path(config_path)
     return ["%s extract --config %s" % (tool, config_hint),
             "%s bootstrap --config %s" % (tool, config_hint)]
+
+
+SESSION_HINT_EVERY = 15
+
+
+def _session_hint(cfg):
+    """Suggest a new session once this one has finished N chunks.
+
+    Scheduling state lives on disk, so a fresh session loses nothing; only the
+    main session's context grows. The session id comes from the environment, so
+    the baseline resets by itself when the user starts a new session. This is
+    advice: it never changes the exit code or the chunk being handed out.
+    """
+    session = os.environ.get("OPENCODE_SESSION_ID")
+    if not session:
+        return
+    done, _ = chunks.progress(cfg)
+    path = cfg.work_dir / "session.json"
+    state = {}
+    if path.exists():
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            state = {}
+    if state.get("session") != session:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"session": session, "done": done}) + "\n",
+                        encoding="utf-8")
+        return
+    if done - int(state.get("done", done)) < SESSION_HINT_EVERY:
+        return
+    state["done"] = done
+    path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    print("hint: %d chunk(s) finished in this session; starting a new session "
+          "now keeps the context small. Translations, the glossary, and the "
+          "progress index are on disk, so nothing is lost."
+          % SESSION_HINT_EVERY)
 
 
 def cmd_init(args):
@@ -386,6 +424,7 @@ def cmd_next(args):
             return 1
         return 0
     filename, chunk, state, last, nseg = target
+    _session_hint(cfg)
     if any(_print_note_hints(cfg, before=filename)):
         done, total = chunks.progress(cfg)
         print("progress: %d/%d chunks" % (done, total))
