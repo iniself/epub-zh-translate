@@ -16,6 +16,15 @@ CJK_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 LATIN_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'\u2019\-]*")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+# A bare domain with no scheme ("sites.google.com/x") is still a URL to the
+# reader, and appears throughout reference lists.
+DOMAIN_RE = re.compile(
+    r"\b[\w-]+\.(?:com|org|net|edu|gov|io|co|ai|dev|me|be|ly|tv|info|news)\b",
+    re.IGNORECASE)
+# Markers that only appear in bibliographies and legal citations. Kept short
+# on purpose: "No. 1" or a year would also match ordinary prose.
+REFERENCE_MARK_RE = re.compile(r"\b(?:ECF|Exhibit|accessed|et\s+al\.)",
+                               re.IGNORECASE)
 CODE_RE = re.compile(
     r"(?:[{}<>]|=>|#!/|^\s*[\$>#]\s|^\s*[\$>#]$|"
     r"\b(?:sudo|pip|npm|apt-get)\b)", re.MULTILINE)
@@ -1148,7 +1157,7 @@ def _longest_common_run(source_words, target_words, used=()):
 
 def _run_is_prose(run):
     """True when a copied run looks like sentence text, not a name or code."""
-    if EMAIL_RE.search(run) or URL_RE.search(run):
+    if EMAIL_RE.search(run) or URL_RE.search(run) or DOMAIN_RE.search(run):
         return False
     words = LATIN_WORD_RE.findall(run)
     if len(words) < 2:
@@ -1255,17 +1264,39 @@ def keep_patterns(cfg):
     return _compile_keep(guide.keep_terms(cfg))
 
 
-def _untranslated_spans(source, translated, limit=3):
+def _has_reference_mark(run):
+    """True when a copied run carries a marker only a reference would have."""
+    return bool(REFERENCE_MARK_RE.search(run))
+
+
+def _run_is_paragraph(run):
+    """True when a copied run holds at least two sentences.
+
+    ``_is_citation`` searches a window for a quoted title plus a year. A
+    paragraph that happens to quote something and mention a year would pass
+    that test, so multi-sentence runs never count as a citation.
+    """
+    return bool(re.search(r"[A-Za-z]{2,}[.!?][”\"']?\s+[A-Z“]", run))
+
+
+def _untranslated_spans(source, translated, limit=3, original=None):
     """Return copied source phrases still sitting in the translation.
 
-    Mixed Chinese/English is normal; what is not normal is a whole source
-    phrase surviving verbatim. Matching whole word runs keeps names, single
+    Mixed Chinese/English is normal; what is not normal is a whole sentence
+    surviving verbatim. Matching whole word runs keeps names, single
     loanwords, emails, URLs, and labels out of the report. Up to ``limit``
     distinct phrases are returned so one check names everything that matters
     instead of forcing one repair round per phrase.
+
+    ``translated`` may be the keep-term-masked text (masking preserves offsets);
+    ``original`` is then the text the reader sees. Judging on the original
+    keeps a masked word from hiding the domain or the quotes that mark a
+    reference.
     """
     source_body = markup.strip_placeholders(source)
     target_body = markup.strip_placeholders(translated)
+    visible = (markup.strip_placeholders(original)
+               if original is not None else target_body)
     source_words = [word.lower()
                     for word, _, _ in _latin_tokens(source_body)]
     tokens = _latin_tokens(target_body)
@@ -1284,11 +1315,14 @@ def _untranslated_spans(source, translated, limit=3):
         start = tokens[end - length][1]
         stop = tokens[end - 1][2]
         run = target_body[start:stop]
-        if len(run) >= MIN_RESIDUE_CHARS and _run_is_prose(run) \
-                and run not in found \
+        visible_run = visible[start:stop]
+        if len(run) >= MIN_RESIDUE_CHARS and _run_is_prose(visible_run) \
+                and not _has_reference_mark(visible_run) \
+                and visible_run not in found \
                 and not _is_parenthetical(target_body, start, stop) \
-                and not _is_citation(target_body, start, stop):
-            found.append(run)
+                and (_run_is_paragraph(visible_run)
+                     or not _is_citation(visible, start, stop)):
+            found.append(visible_run)
     return found
 
 
@@ -1459,7 +1493,8 @@ def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
             continue
         if cfg.require_latin:
             runs = _untranslated_spans(_mask_terms(seg.text, keep_terms),
-                                       _mask_terms(text, keep_terms))
+                                       _mask_terms(text, keep_terms),
+                                       original=text)
             if runs:
                 detail = ('untranslated source text still in the translation: '
                           '%s; translate it (names, terms, and code may stay '

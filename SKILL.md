@@ -369,12 +369,14 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
   **不要追加到文件末尾**。
 - 混排英文会被单独点名：
   - `untranslated source text still in the translation: "..."`：译文里保留了整段
-    源文短语（≥20 字符、两个以上小写词）。只改这几个词；人名、术语、邮箱、URL
-    可以保留，不要为此加 `@@@VERBATIM@@@`。
+    源文句子（与原文逐字相同、≥20 字符、两个以上小写词、不像专名）。URL/域名、
+    `ECF`/`Exhibit`/`accessed`/`et al.`、括号内注释、引文格式的文献条目会被放过。
+    只改这几个词；人名、术语、邮箱、URL、文献条目可以保留，不要为此加
+    `@@@VERBATIM@@@`。
   - `@@@VERBATIM@@@ on a prose segment`：普通句子不能靠插标记跳过翻译；只有代码、
     命令、日志、URL 才能整段保留。
-  - 这两类分别是 `not-translated` 和 `other`，**不能登记人工介入**；修不动也要继续翻，
-    卡住就如实报告，不许丢进人工清单。
+  - 这两类分别是 `not-translated` 和 `other`，**轮次用完前不能登记人工介入**；修不动
+    就如实报告，轮次用完后才允许登记。
 - 子代理执行契约要求**优先一次 `write` 写完**整个分块，只有写被截断才追加。追加
   时 oldString 只取最后一段，newString 不得重复最后一段——重复段几乎都来自这个
   边界写错。`edit` 返回 identical/找不到/多处匹配时不得重试，直接 `write` 重写整块。

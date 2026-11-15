@@ -621,6 +621,33 @@ class UntranslatedSpanTest(unittest.TestCase):
             chunks._untranslated_spans("They changed their minds", "他们改变了主意"),
             [])
 
+    def test_a_url_split_by_a_masked_term_is_judged_on_the_original(self):
+        # "google" is a keep term, so the masked text has a blank inside the
+        # URL. Judging the masked text alone makes it look like prose.
+        source = "They published it at sites.      .com/handbook/home."
+        masked = "他们在 sites.      .com/handbook/home 上发布了。"
+        text = "他们在 sites.google.com/handbook/home 上发布了。"
+        self.assertTrue(chunks._untranslated_spans(source, masked))
+        self.assertEqual(
+            chunks._untranslated_spans(source, masked, original=text), [])
+
+    def test_bare_domains_are_not_prose(self):
+        for run in ("sites.google.com/nyu.edu/ml-irl-2020/home",
+                    "news.ycombinator.com/item?id",
+                    "projects.propublica.org/nonprofits/organizations"):
+            self.assertFalse(chunks._run_is_prose(run), run)
+        for run in ("consistent pattern of bad behavior",
+                    "the quick brown fox jumps over the lazy dog",
+                    "In March 2022, Sama leadership called in everyone"):
+            self.assertTrue(chunks._run_is_prose(run), run)
+
+    def test_initials_do_not_make_a_reference_look_like_a_paragraph(self):
+        self.assertFalse(chunks._run_is_paragraph(
+            "Jeffrey A. Hall, “Applying the Ideal Standards Model,” "
+            "Studies in Communication Sciences 14 (2014): 20-28."))
+        self.assertTrue(chunks._run_is_paragraph(
+            "He left the room. Then the team met again in 2019."))
+
 
 class CitationLeadInTest(unittest.TestCase):
     def test_a_citation_whose_run_starts_inside_a_quoted_title(self):
