@@ -291,7 +291,7 @@ def cmd_check(args):
               % (name, args.chunk, len(problems)))
         for problem in problems[:20]:
             print("  !!", problem)
-        if rounds.is_placeholder_only(problems):
+        if review.can_register(cfg, name, args.chunk):
             print("next: run `review --add %s --chunk %d`; do not dispatch"
                   % (stem, args.chunk))
         else:
@@ -328,9 +328,14 @@ def cmd_check(args):
                     placeholders=True)
                 state = rounds.update(cfg, name, args.chunk, path, problems)
             if state.get("exhausted") and problems:
-                print("  exhausted: do not dispatch another subagent; the "
-                      "main session must finish this chunk or run "
-                      "`review --add %s --chunk %d`" % (stem, args.chunk))
+                if review.can_register(cfg, name, args.chunk):
+                    print("  exhausted: do not dispatch another subagent; "
+                          "run `review --add %s --chunk %d` to hand this "
+                          "chunk to manual review" % (stem, args.chunk))
+                else:
+                    print("  exhausted: do not dispatch another subagent; "
+                          "the main session must finish this chunk (partial "
+                          "file or structure problem)")
         all_problems.extend(problems)
         results.append((name, problems))
     for name, problems in results:
@@ -441,9 +446,13 @@ def cmd_next(args):
         print("progress: %d/%d chunks" % (done, total))
         print("prompt: %s" % path)
         print("output: %s" % (cfg.zh_dir / chunks.chunk_name(stem, chunk)))
-        print("action: do not dispatch a subagent; the main session must "
-              "finish this chunk, or run `review --add %s --chunk %d`"
-              % (stem, chunk))
+        if review.can_register(cfg, filename, chunk, fix=False):
+            print("action: do not dispatch a subagent; the main session tries "
+                  "this chunk once, then runs `review --add %s --chunk %d`"
+                  % (stem, chunk))
+        else:
+            print("action: do not dispatch a subagent; the main session must "
+                  "finish this chunk (partial file or structure problem)")
         print("check: %s check --config %s %s --chunk %d --fix"
               % (guide._module_cmd(cfg), guide.quote_path(cfg.path), stem,
                  chunk))

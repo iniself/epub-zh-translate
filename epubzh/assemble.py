@@ -439,16 +439,32 @@ def _report_terms(rows, limit=10):
 
 
 def _report_review(rows, cfg):
+    """List manual-review items per chunk, not per segment.
+
+    A chunk can hold dozens of segments, and the build report goes into the
+    scheduler's context on every attempt; one line per chunk keeps it short
+    while the TSV still has the full detail.
+    """
     print("\nmanual review: %d item(s) in %s"
           % (len(rows), review.path_for(cfg)))
-    for row in rows[:20]:
-        detail = row.get("detail") or ""
-        print("  - %s chunk %d seg %d: %s%s"
-              % (row.get("file", "?"), row.get("chunk", 0), row.get("seg", 0),
-                 row.get("kind", "other"),
-                 (": " + detail) if detail else ""))
-    if len(rows) > 20:
-        print("  ... %d more item(s)" % (len(rows) - 20))
+    groups = {}
+    for row in rows:
+        key = (row.get("file", "?"), row.get("chunk", 0))
+        groups.setdefault(key, []).append(row)
+    for (name, ci), members in list(groups.items())[:10]:
+        kinds = {}
+        for row in members:
+            kind = row.get("kind", "other")
+            kinds[kind] = kinds.get(kind, 0) + 1
+        segs = ", ".join(str(row.get("seg", 0)) for row in members[:4])
+        if len(members) > 4:
+            segs += ", +%d" % (len(members) - 4)
+        print("  - %s chunk %d: %d item(s) [%s], seg %s"
+              % (name, ci, len(members),
+                 ", ".join("%d %s" % (count, kind)
+                           for kind, count in sorted(kinds.items())), segs))
+    if len(groups) > 10:
+        print("  ... %d more chunk(s)" % (len(groups) - 10))
 
 
 def _report_merge(errors):

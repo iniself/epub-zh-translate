@@ -96,13 +96,24 @@ class ReviewRegistryTest(unittest.TestCase):
         review.write(self.cfg, [row])
         self.assertEqual(review.read(self.cfg), [row])
 
-    def test_add_refuses_untranslated_segments(self):
+    def test_add_refuses_untranslated_segments_before_the_rounds_are_spent(self):
         set_source(self.cfg, "<p>Hello world</p>\n")
         self.cfg.require_latin = True
         write_chunk(self.cfg, "Hello world")
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit) as raised:
             review.add(self.cfg, "c", 1)
+        self.assertIn("repair round", str(raised.exception))
         self.assertEqual(review.read(self.cfg), [])
+
+    def test_add_accepts_untranslated_text_once_the_rounds_are_spent(self):
+        set_source(self.cfg, "<p>Hello world</p>\n")
+        self.cfg.require_latin = True
+        write_chunk(self.cfg, "Hello world")
+        self.assertFalse(review.can_register(self.cfg, "c.xhtml", 1))
+        rounds.mark_exhausted(self.cfg, "c.xhtml", 1)
+        self.assertTrue(review.can_register(self.cfg, "c.xhtml", 1))
+        rows = review.add(self.cfg, "c", 1)
+        self.assertEqual([row["kind"] for row in rows], ["not-translated"])
 
     def test_add_refuses_a_partial_chunk(self):
         set_source(self.cfg,
@@ -112,15 +123,16 @@ class ReviewRegistryTest(unittest.TestCase):
             review.add(self.cfg, "c", 1)
         self.assertEqual(review.read(self.cfg), [])
 
-    def test_add_refuses_placeholder_plus_unfinished_segments(self):
+    def test_add_accepts_placeholder_plus_untranslated_segments(self):
         set_source(self.cfg,
                    "<p><em>Hello</em> world</p>\n<p>Another sentence here</p>\n")
         self.cfg.require_latin = True
         write_chunk(self.cfg,
                     "Hello world\n@@@SEG 002@@@\nAnother sentence here")
-        with self.assertRaises(SystemExit):
-            review.add(self.cfg, "c", 1)
-        self.assertEqual(review.read(self.cfg), [])
+        rounds.mark_exhausted(self.cfg, "c.xhtml", 1)
+        rows = review.add(self.cfg, "c", 1)
+        self.assertEqual(sorted({row["kind"] for row in rows}),
+                         ["not-translated", "placeholder"])
 
     def test_registered_chunks_do_not_count_as_progress(self):
         from epubzh import chunks
@@ -133,7 +145,7 @@ class ReviewRegistryTest(unittest.TestCase):
             "source": "s", "translation": "t", "detail": "d"}])
         self.assertEqual(chunks.progress(self.cfg), (0, 1))
 
-    def test_recheck_requeues_untranslated_chunk(self):
+    def test_recheck_keeps_untranslated_rows(self):
         set_source(self.cfg, "<p>Hello world</p>\n")
         self.cfg.require_latin = True
         write_chunk(self.cfg, "Hello world")
@@ -144,16 +156,16 @@ class ReviewRegistryTest(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out):
             remaining = review.recheck(self.cfg)
-        self.assertEqual(remaining, [])
-        self.assertEqual(review.read(self.cfg), [])
-        self.assertIn("requeued", out.getvalue())
+        self.assertEqual([row["kind"] for row in remaining],
+                         ["not-translated"])
+        self.assertEqual(review.read(self.cfg), remaining)
+        self.assertNotIn("requeued", out.getvalue())
 
-    def test_recheck_requeues_whole_chunk_when_any_segment_is_unfinished(self):
+    def test_recheck_requeues_whole_chunk_when_a_segment_is_missing(self):
         set_source(self.cfg,
                    "<p><em>Hello</em> world</p>\n<p>Another sentence here</p>\n")
         self.cfg.require_latin = True
-        write_chunk(self.cfg,
-                    "Hello world\n@@@SEG 002@@@\nAnother sentence here")
+        write_chunk(self.cfg, "你好，世界")
         review.write(self.cfg, [{
             "file": "c.xhtml", "chunk": 1, "seg": 1, "kind": "placeholder",
             "source": "", "translation": "", "detail": "placeholder mismatch"}])

@@ -1473,7 +1473,7 @@ def _check_chunk(cfg, name, ci, chunk, fix=True, placeholders=False,
     return problems, issues
 
 
-def chunk_issues(cfg, name, ci):
+def chunk_issues(cfg, name, ci, fix=True):
     """Return failing segments of one chunk for the manual-review registry."""
     groups, _, err = _load_source(cfg, name)
     if err:
@@ -1481,7 +1481,7 @@ def chunk_issues(cfg, name, ci):
     chunks = groups
     if ci < 1 or ci > len(chunks):
         raise SystemExit("%s: chunk must be 1..%d" % (name, len(chunks)))
-    _, issues = _check_chunk(cfg, name, ci, chunks[ci - 1], fix=True,
+    _, issues = _check_chunk(cfg, name, ci, chunks[ci - 1], fix=fix,
                              placeholders=False, verbose=False,
                              keep_terms=keep_patterns(cfg))
     return issues

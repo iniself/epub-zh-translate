@@ -52,7 +52,7 @@ class CombinedBuildReportTest(unittest.TestCase):
         self.assertIn("terminology: 1 term(s)", out)
         self.assertIn("agent", out)
         self.assertIn("manual review: 1 item(s)", out)
-        self.assertIn("c.xhtml chunk 1 seg 2: structure", out)
+        self.assertIn("c.xhtml chunk 1: 1 item(s) [1 structure], seg 2", out)
 
     def test_merge_and_structure_problems_join_the_same_report(self):
         ok, out, _, package = self.run_build(

@@ -69,7 +69,8 @@ class SessionHintTest(unittest.TestCase):
 
 class NextActionTest(unittest.TestCase):
     def _run_next(self, state, last=0, style=None, decisions=None,
-                  target_missing=False, registered=None, repair_state=None):
+                  target_missing=False, registered=None, repair_state=None,
+                  can_register=True):
         cfg = SimpleNamespace(zh_dir=Path("/tmp/zh"), path="/tmp/book.toml",
                               segs_dir=Path("/tmp/segs"),
                               work_dir=Path("/tmp/missing-work"),
@@ -88,6 +89,8 @@ class NextActionTest(unittest.TestCase):
                                   return_value=decisions), \
                 mock.patch.object(cli.review, "read",
                                   return_value=registered or []), \
+                mock.patch.object(cli.review, "can_register",
+                                  return_value=can_register), \
                 mock.patch.object(cli.rounds, "get",
                                   return_value=repair_state or {}), \
                 mock.patch.object(cli.chunks, "progress", return_value=(1, 3)), \
@@ -159,6 +162,21 @@ class NextActionTest(unittest.TestCase):
         self.assertIn("exhausted", out)
         self.assertIn("do not dispatch a subagent", out)
         self.assertNotIn("dispatch one subagent", out)
+
+    def test_exhausted_chunk_points_at_the_manual_review_registry(self):
+        out, code = self._run_next(
+            "repair",
+            repair_state={"exhausted": True, "rounds": 2, "problems": 1})
+        self.assertEqual(code, 0)
+        self.assertIn("review --add chapter --chunk 1", out)
+
+    def test_exhausted_chunk_with_a_broken_file_stays_in_the_queue(self):
+        out, code = self._run_next(
+            "repair", can_register=False,
+            repair_state={"exhausted": True, "rounds": 2, "problems": 1})
+        self.assertEqual(code, 0)
+        self.assertIn("partial file or structure problem", out)
+        self.assertNotIn("review --add", out)
 
     def test_hints_are_silent_when_notes_are_current(self):
         out = self.run_next("pending")

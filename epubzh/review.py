@@ -110,26 +110,37 @@ def _resolve(cfg, value):
     return matches[0]
 
 
-def collect(cfg, name, ci):
-    """Return registry rows for the failing segments of one chunk."""
+def collect(cfg, name, ci, fix=True):
+    """Return registry rows for the failing segments of one chunk.
+
+    ``fix=False`` keeps the call read-only, for hints that must not touch the
+    translation.
+    """
     from . import chunks
 
     name = _resolve(cfg, name)
-    issues = chunks.chunk_issues(cfg, name, ci)
+    issues = chunks.chunk_issues(cfg, name, ci, fix=fix)
     return [{"file": name, "chunk": ci, "seg": issue["seg"],
              "kind": issue["kind"], "source": issue["source"],
              "translation": issue["translation"],
              "detail": issue["detail"]} for issue in issues]
 
 
-def _reviewable(issues):
-    """Manual review is only for placeholder failures that survived repair.
+# Kinds the registry may hold once repair has run out of ideas. Placeholders
+# are mechanical leftovers; untranslated text is what the translator kept
+# saying is not text to translate (citations, code, a false positive). Either
+# way the chunk is as finished as the translator can make it.
+REGISTRABLE = ("placeholder", "not-translated")
 
-    Everything else is unfinished translation: untranslated segments, partial
-    files, missing files, marker/structure errors. Those belong in the
-    translation queue, never in the manual-review registry.
+
+def _registrable(issues):
+    """True when every remaining issue is content, not unfinished work.
+
+    Structural damage, a partial file, or a missing file means the chunk was
+    never finished; those belong in the translation queue, never in the
+    manual-review registry.
     """
-    return bool(issues) and all(issue["kind"] == "placeholder"
+    return bool(issues) and all(issue["kind"] in REGISTRABLE
                                 for issue in issues)
 
 
@@ -141,13 +152,30 @@ def _kind_summary(issues):
                      for kind, count in sorted(counts.items()))
 
 
+def can_register(cfg, name, ci, fix=True):
+    """True when `review --add` would accept this chunk right now.
+
+    The CLI hints use it so they never suggest a command that will be
+    refused: the leftovers must be content and the repair rounds must be
+    spent. ``fix=False`` keeps a read-only caller from touching the
+    translation.
+    """
+    try:
+        if not _registrable(collect(cfg, name, ci, fix=fix)):
+            return False
+    except SystemExit:
+        return False
+    state = rounds.get(cfg, name, ci)
+    return bool(state.get("exhausted") or state.get("fallback"))
+
+
 def add(cfg, name, ci):
     """Register a chunk's problems, replacing any earlier rows for it.
 
     Two gates protect the registry:
 
-    * every remaining issue must be a placeholder failure; untranslated
-      segments, a partial file, or structural damage mean the translation is
+    * every remaining issue must be content (placeholder or untranslated
+      text); a partial file or structural damage means the translation is
       unfinished and must go back to the translator;
     * the chunk's repair rounds must be spent (exhausted, or the automatic
       fallback already ran). Registering on the first check hides work the
@@ -155,12 +183,12 @@ def add(cfg, name, ci):
     """
     name = _resolve(cfg, name)
     fresh = collect(cfg, name, ci)
-    if fresh and not _reviewable(fresh):
+    if fresh and not _registrable(fresh):
         raise SystemExit(
             "%s chunk %d is not finished (%s); keep translating and run "
-            "`check --chunk` again. Manual review only accepts placeholder "
-            "failures after the repair rounds." % (name, ci,
-                                                    _kind_summary(fresh)))
+            "`check --chunk` again. Manual review takes finished chunks only: "
+            "partial files and structural damage stay in the queue."
+            % (name, ci, _kind_summary(fresh)))
     if fresh:
         state = rounds.get(cfg, name, ci)
         spent = int(state.get("rounds", 0))
@@ -182,9 +210,10 @@ def add(cfg, name, ci):
 def recheck(cfg):
     """Clear the registry, re-check recorded chunks, keep what still fails.
 
-    Placeholder-only failures stay registered. Any other issue means the chunk
-    is unfinished, so all its rows are dropped and `next` hands it back to the
-    translator.
+    Placeholder and untranslated failures stay registered: they are content
+    the translator has already given up on, so re-checking cannot improve
+    them. Any structural issue or partial file means the chunk is unfinished,
+    so all its rows are dropped and `next` hands it back to the translator.
     """
     rows = read(cfg)
     if not rows:
@@ -202,7 +231,7 @@ def recheck(cfg):
         if not issues:
             cleared.append((name, ci))
             continue
-        if not _reviewable(issues):
+        if not _registrable(issues):
             requeued.append((name, ci, len(issues)))
             continue
         remaining.extend(issues)

@@ -404,6 +404,9 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
    - 第 2 次仍没有写出文件：主会话直接翻译这一块（允许的例外），或换模型 / 降低
      thinking 深度后重派；把块号和原因记进 `work/decisions.md`。
    - **不要第 3 次把同一份提示词派给同一个模型**：重复派发只会重复空转。
+   - 例外：上一次报错只剩未译残留（`untranslated source text` / `not translated`）时
+     **不要 `--brief` 重派**。短提示词解决不了内容问题，直接让主会话补一次，仍不过就
+     登记。
 3. 同一分块最多派发 2 次（正常一次 + brief 一次）；之后走第 2 条的兜底。
 4. 子代理的完成回复应为 `已写入 <path>；check OK` 或 `失败：<原因>`；没有 `check OK`
    就按未完成处理。工具报 `exhausted` 后，按下一节登记，不要停整本。
@@ -424,24 +427,27 @@ repair / partial / broken，再按顺序补 pending。所以不需要先跑全�
 
 - 一行一个段：`file`、`chunk`、`seg`、`kind`（`placeholder` / `not-translated` /
   `structure` / `other`）、`source`（该段原文）、`translation`（当前译文）、`detail`（报错）。
-- **只有全部问题都是 `placeholder`、并且该块的修复轮次已经用完（或已跑过兜底）的块才能登记。**
-  `not-translated`、`partial`、`file missing`、段号/结构错误一律算未完成，会被拒绝并退回
-  翻译队列；轮次没走完就登记也会被拒绝，提示继续修。翻译内容始终由 agent 完成，用户不需要
-  编辑 `work/zh`。
-- `review` 复检时，只要问题不全是 `placeholder`，整块就**退回翻译队列**（打印
-  `requeued ...`），由 `next` 重新派发补译，不会留在清单里占位。
+- **能登记的是「翻完但过不了检查」的块**：只剩 `placeholder` 或 `not-translated`，
+  并且该块的修复轮次已经用完（`exhausted`，或已跑过兜底）。`partial`、`file missing`、
+  段号/结构错误算没做完，一律拒绝；轮次没走完就登记也会被拒绝，提示继续修。
+  翻译内容始终由 agent 完成，用户不需要编辑 `work/zh`。
+- 未译残留登记的前提是：短提示词重派、主会话补译都试过，改不动。**不要为了少干活
+  提前登记**——轮次门槛就是拦这个的。
+- `review` 复检时，只有出现 `partial`、`file missing` 或结构问题时整块才**退回翻译
+  队列**（打印 `requeued ...`）；`placeholder` 和 `not-translated` 会留在清单里，直到
+  译文真的改到通过。
 - 被登记的块**不计入 `translated` 进度**：`status` 里按未完成算，`next` 的进度也会
   把它排除。登记不是进度。
-- 没通过 `check` 的块同样不计入进度：结构完整但留下未翻译英文时，`status` 和
-  `next` 的 `X/Y` 都不算它，`next` 会把它当作 `repair` 继续返回。
-- 登记后 `next` 会跳过该块继续翻后面的块；不要反复重派它。
-- `check` 报 `exhausted` 的块，`next` 会返回 `action: do not dispatch a subagent`；
-  只由主会话处理，处理不了再 `review --add`。
+- 登记后 `next` 会跳过该块继续翻后面的块；不要反复重派它，也不要换模型再试一遍。
+- `check` 报 `exhausted` 的块，`next` 会返回 `action: do not dispatch a subagent`：
+  该块全程不再派子代理，主会话最多补一次；补不动就 `review --add`。
 - 全部翻完时 `next` 显示 `X/Y chunks (N in manual review)`；先跑 `review`，再跑
   `build`。`build` 会把人工介入项和术语、合并、结构问题一起列出，不会只报一项。
-- 构建前先跑 `review`：它重查所有登记过的块，修好的清除、未完成的退回队列、仍修不动
-  的保留。`build` 也不会在清单非空时合并，但会把清单和其他问题一起报出来。
-- `status` 里的 `Nr` 表示该文件有 N 条人工介入项；这些块按未完成计，不再算 `done`。
+- 构建前先跑 `review`：它重查所有登记过的块，修好的清除、没做完的退回队列、仍改不动
+  的保留。**清单非空时 `build` 一律拒绝合并，没有放行开关**：要么改译文，要么改
+  检查规则（后者由用户决定，见第三节第 5 条）。
+- `status` 里文件名后面的 `3r` 表示该文件有 3 条人工介入项；这些块按未完成计，不再算
+  `done`。
 
 弱模型（4B 级激活、thinking 很长的模型）建议单独配一个翻译 subagent，降低推理深度。
 `steps` 是安全上限，不是轮次：6 轮正常修复大约需要 20 次工具调用，建议设 25–30；
