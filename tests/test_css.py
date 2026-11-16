@@ -1,4 +1,5 @@
 """Tests for the Chinese typography stylesheet installation."""
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -136,6 +137,39 @@ class DetectStylesheetTest(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         self.assertIn('stylesheet = "keep"', text)
         self.assertIn('stylesheet = "OEBPS/css/main.css"', text)
+
+
+class DefaultStylesheetTest(unittest.TestCase):
+    """The shipped overrides must actually beat a publisher's class rules."""
+
+    def setUp(self):
+        self.css = config.DEFAULT_CSS.read_text(encoding="utf-8")
+
+    def block(self, selector):
+        found = re.search(r"(?m)^%s\s*\{(.*?)\}" % re.escape(selector),
+                          self.css, re.S)
+        self.assertIsNotNone(found, selector)
+        return found.group(1)
+
+    def test_leading_is_flagged_important(self):
+        # A Calibre class ("line-height: 1.2") outranks a bare "p" selector,
+        # so an unflagged declaration installs and then silently loses.
+        for selector in ("body", "p", "li", "blockquote"):
+            block = self.block(selector)
+            self.assertRegex(block, r"line-height:\s*[\d.]+(?:em|%)?\s*!important",
+                             selector)
+
+    def test_font_family_is_flagged_important(self):
+        self.assertRegex(self.block("body"),
+                         r"font-family:[^;]*!important")
+
+    def test_layout_is_left_to_the_publisher(self):
+        # Font size, margins and indentation stay untouched on purpose: they
+        # carry the book's design, and forcing them flattens title pages.
+        flagged = set(re.findall(r"([\w-]+)\s*:[^;{}]*!important", self.css))
+        allowed = {"line-height", "font-family", "hyphens",
+                   "-webkit-hyphens", "line-break"}
+        self.assertLessEqual(flagged, allowed, flagged - allowed)
 
 
 if __name__ == "__main__":

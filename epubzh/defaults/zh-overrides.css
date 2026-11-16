@@ -4,25 +4,33 @@
    - CJK-first font stack with sensible Latin fallback
    - generous leading, justified CJK text, kinsoku line breaking
    - code blocks keep a monospace stack and never overflow
+
+   Leading and font family carry !important on purpose. Converter-generated
+   CSS (Calibre and friends) stamps "line-height: 1.2" on every class, and a
+   class outranks a bare tag selector no matter which file loads last. Without
+   the flag the whole stylesheet installs, links, and silently loses.
+   Layout properties (font-size, margins, text-indent, display, page breaks)
+   are deliberately left alone so the publisher's design still shows through.
    ========================================================================== */
 
 body {
     font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Hiragino Sans GB",
                  "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC",
-                 "WenQuanYi Micro Hei", sans-serif;
-    line-height: 1.75;
+                 "WenQuanYi Micro Hei", sans-serif !important;
+    line-height: 1.75 !important;
     color: #1b1b1b;
     text-align: justify;
     text-justify: inter-ideograph;
-    line-break: strict;
+    line-break: strict !important;
     word-break: normal;
     overflow-wrap: break-word;
-    -webkit-hyphens: none;
-    hyphens: none;
+    -webkit-hyphens: none !important;
+    hyphens: none !important;
     margin: 0 6pt;
 }
 
 p {
+    line-height: 1.7 !important;
     margin: 0 0 0.55em 0;
     orphans: 2;
     widows: 2;
@@ -32,13 +40,13 @@ p {
 
 /* paragraphs that carry running text get a comfortable rhythm */
 .readable-text p {
-    line-height: 1.75;
+    line-height: 1.7 !important;
     margin-bottom: 0.55em;
 }
 
 h1, h2, h3, h4, h5 {
-    font-family: inherit;
-    line-height: 1.45;
+    font-family: inherit !important;
+    line-height: 1.45 !important;
     letter-spacing: 0;
     margin-top: 1.2em;
     margin-bottom: 0.6em;
@@ -59,11 +67,16 @@ h4, h5 { font-size: 1em; }
 }
 
 li {
-    line-height: 1.7;
+    line-height: 1.7 !important;
 }
 
 li.readable-text {
     margin: 3pt 0 3pt 22px;
+}
+
+/* table cells and definition lists: no publisher class may tighten these */
+dd, td, th {
+    line-height: 1.6 !important;
 }
 
 ul, ol {
@@ -72,7 +85,8 @@ ul, ol {
 }
 
 blockquote {
-    font-family: inherit;
+    font-family: inherit !important;
+    line-height: 1.7 !important;
     margin: 0.8em 1.2em;
     padding-left: 0.8em;
     border-left: 3px solid #d0d7e2;
